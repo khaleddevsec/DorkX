@@ -50,22 +50,23 @@ dorkx [flags]
 | `-l file.txt` | File with dorks, one per line |
 | `stdin` | Pipe dorks via stdin (see examples) |
 
-### Search & API Flags
+### Engine Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-p int` | `3` | Number of Google result pages per dork |
+| `-e name` | `yahoo` | Search engine: `yahoo` (default, zero-captcha), `google`, `google-api`, or `all` |
+| `-api-key key` | `""` | Google Custom Search API Key (for `google-api` engine) |
+| `-cx id` | `""` | Google Search Engine CX ID (for `google-api` engine) |
+
+### Search & Filter Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-p int` | `3` | Number of result pages per dork |
 | `-t int` | `1` | Concurrent dork searches |
-| `-delay "min-max"` | `"2-5"` | Random delay between requests (seconds) |
+| `-delay "min-max"` | `"1-3"` | Random delay between requests (seconds) |
 | `-timeout int` | `30` | HTTP timeout per request in seconds |
-| `-api-key key` | `""` | Google Custom Search API Key (100% Zero-Captcha) |
-| `-cx id` | `""` | Google Programmable Search Engine ID (CX) |
-
-### Filter Flags
-
-| Flag | Description |
-|------|-------------|
-| `-u` | Only output 1 URL per unique root domain |
+| `-u` | `false` | Only output 1 URL per unique root domain |
 
 ### Proxy Flags
 
@@ -82,17 +83,15 @@ dorkx [flags]
 | `-silent` | Only print URLs (no banner/logs) — best for piping |
 | `-nc` | Disable colored output |
 | `-version` | Print version and exit |
-| `-nc` | Disable colored output |
-| `-version` | Print version and exit |
 
 ---
 
 ## Examples
 
-### Basic single dork
+### Instant Search (Zero CAPTCHA, Real Target URLs)
 
 ```bash
-dorkx -d "inurl:index.php?id=" -p 5
+dorkx -d "inurl:php?id=" -p 3 -o results.txt
 ```
 
 ### Silent mode — only matched URLs to stdout

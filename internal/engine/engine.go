@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,10 +31,8 @@ var userAgents = []string{
 	"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
-	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (X11; Linux x86_64) rv:123.0 Gecko/20100101 Firefox/123.0",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 }
 
 func randomUA() string {
@@ -46,6 +45,7 @@ func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 	transport := &http.Transport{
 		DisableKeepAlives: false,
 		MaxIdleConns:      10,
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
 	}
 
 	if proxyURL != nil {
@@ -66,48 +66,69 @@ func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 	}
 }
 
-func buildHeaders(referer string) map[string]string {
-	return map[string]string{
-		"User-Agent":                randomUA(),
-		"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-		"Accept-Language":           "en-US,en;q=0.9",
-		"Connection":                "keep-alive",
-		"Upgrade-Insecure-Requests": "1",
-		"Sec-Fetch-Dest":            "document",
-		"Sec-Fetch-Mode":            "navigate",
-		"Sec-Fetch-Site":            "none",
-		"Sec-Fetch-User":            "?1",
-		"Cache-Control":             "max-age=0",
-		"Referer":                   referer,
-	}
+// ---- Yahoo Engine (Default & Zero-Captcha) -----------------------------------
+
+type YahooEngine struct{}
+
+func NewYahooEngine() *YahooEngine {
+	return &YahooEngine{}
 }
 
-func fetchPage(client *http.Client, targetURL string, headers map[string]string) (string, error) {
-	req, err := http.NewRequest("GET", targetURL, nil)
+func (y *YahooEngine) Name() string { return "Yahoo" }
+
+var yahooRe = regexp.MustCompile(`/RU=([^/]+)/RK=`)
+
+func (y *YahooEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
+	// Yahoo pagination: b=1, 51, 101...
+	start := (page * 50) + 1
+	searchURL := fmt.Sprintf(
+		"https://search.yahoo.com/search?p=%s&n=50&b=%d",
+		url.QueryEscape(dork),
+		start,
+	)
+
+	client := buildClient(proxyURL, timeout)
+	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
+	req.Header.Set("User-Agent", randomUA())
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 429 || resp.StatusCode == 503 {
-		return "", fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
+		return nil, fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return string(body), nil
+	var results []Result
+	seen := make(map[string]bool)
+
+	matches := yahooRe.FindAllStringSubmatch(string(body), -1)
+	for _, m := range matches {
+		decoded, err := url.QueryUnescape(m[1])
+		if err != nil || !strings.HasPrefix(decoded, "http") {
+			continue
+		}
+
+		if !seen[decoded] {
+			seen[decoded] = true
+			results = append(results, Result{RawURL: decoded, Source: y.Name()})
+		}
+	}
+
+	return results, nil
 }
 
 // ---- Google HTML Engine -----------------------------------------------------
@@ -120,26 +141,42 @@ func NewGoogleEngine() *GoogleEngine {
 
 func (g *GoogleEngine) Name() string { return "Google (HTML Scraper)" }
 
-var hrefRe = regexp.MustCompile(`href=["'](/url\?q=[^"'&]+|https?://[^"'\s>]+)["' >]`)
+var googleHrefRe = regexp.MustCompile(`href=["'](/url\?q=[^"'&]+|https?://[^"'\s>]+)["' >]`)
 
 func (g *GoogleEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
 	start := page * 10
-	encoded := url.QueryEscape(dork)
-
 	searchURL := fmt.Sprintf(
 		"https://www.google.com/search?q=%s&hl=en&start=%d&filter=0",
-		encoded, start,
+		url.QueryEscape(dork), start,
 	)
 
 	client := buildClient(proxyURL, timeout)
-	headers := buildHeaders("https://www.google.com/")
-
-	body, err := fetchPage(client, searchURL, headers)
+	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	lowerBody := strings.ToLower(body)
+	req.Header.Set("User-Agent", randomUA())
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 || resp.StatusCode == 503 {
+		return nil, fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+
+	bodyStr := string(body)
+	lowerBody := strings.ToLower(bodyStr)
 	if strings.Contains(lowerBody, "detected unusual traffic") ||
 		strings.Contains(lowerBody, "recaptcha") ||
 		strings.Contains(lowerBody, "sorry/index") {
@@ -149,7 +186,7 @@ func (g *GoogleEngine) Search(dork string, page int, proxyURL *url.URL, timeout 
 	var results []Result
 	seen := make(map[string]bool)
 
-	matches := hrefRe.FindAllStringSubmatch(body, -1)
+	matches := googleHrefRe.FindAllStringSubmatch(bodyStr, -1)
 	for _, match := range matches {
 		if len(match) < 2 {
 			continue
@@ -187,7 +224,7 @@ func NewGoogleCSEEngine(apiKey, cx string) *GoogleCSEEngine {
 	}
 }
 
-func (g *GoogleCSEEngine) Name() string { return "Google (Official Custom Search API)" }
+func (g *GoogleCSEEngine) Name() string { return "Google (Custom Search API)" }
 
 type googleCSEJSONResponse struct {
 	Items []struct {
@@ -201,7 +238,6 @@ type googleCSEJSONResponse struct {
 }
 
 func (g *GoogleCSEEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
-	// Google CSE uses 1-based start index (1, 11, 21...)
 	start := (page * 10) + 1
 	apiURL := fmt.Sprintf(
 		"https://www.googleapis.com/customsearch/v1?key=%s&cx=%s&q=%s&start=%d",
@@ -245,4 +281,42 @@ func (g *GoogleCSEEngine) Search(dork string, page int, proxyURL *url.URL, timeo
 	}
 
 	return results, nil
+}
+
+// ---- Multi-Engine Provider ---------------------------------------------------
+
+type MultiEngine struct {
+	engines []Engine
+}
+
+func NewMultiEngine(engines ...Engine) *MultiEngine {
+	return &MultiEngine{engines: engines}
+}
+
+func (m *MultiEngine) Name() string {
+	var names []string
+	for _, e := range m.engines {
+		names = append(names, e.Name())
+	}
+	return strings.Join(names, " + ")
+}
+
+func (m *MultiEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
+	var allResults []Result
+	seen := make(map[string]bool)
+
+	for _, eng := range m.engines {
+		res, err := eng.Search(dork, page, proxyURL, timeout)
+		if err != nil {
+			continue // fallback smoothly to next engine
+		}
+		for _, r := range res {
+			if !seen[r.RawURL] {
+				seen[r.RawURL] = true
+				allResults = append(allResults, r)
+			}
+		}
+	}
+
+	return allResults, nil
 }

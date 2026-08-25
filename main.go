@@ -35,7 +35,7 @@ func printBanner() {
 	meta := ansiGray + "         by " + ansiReset +
 		ansiYellow + "Fr0z3n_1c3" + ansiReset +
 		ansiGray + " | " + ansiReset +
-		ansiCyan + "v1.0.0" + ansiReset +
+		ansiCyan + "v1.2.0" + ansiReset +
 		ansiGray + " | " + ansiReset +
 		"https://github.com/frozeniceee/DorkX"
 
@@ -50,16 +50,17 @@ func main() {
 	dork        := flag.String("d", "", "Single dork query (e.g: \"inurl:php?id=\")")
 	list        := flag.String("l", "", "Path to file containing dorks (one per line)")
 	outputFile  := flag.String("o", "", "Save results to file (e.g: -o results.txt)")
-	pages       := flag.Int("p", 3, "Number of Google result pages to scrape per dork (default: 3)")
-	delay       := flag.String("delay", "2-5", "Delay range between requests in seconds (e.g: 2-5)")
+	engineName  := flag.String("e", "yahoo", "Search engine: yahoo (default, zero-captcha), google, google-api, or all")
+	pages       := flag.Int("p", 3, "Number of result pages to scrape per dork (default: 3)")
+	delay       := flag.String("delay", "1-3", "Delay range between requests in seconds (e.g: 1-3)")
 	proxy       := flag.String("proxy", "", "HTTP/SOCKS5 proxy URL (e.g: socks5://127.0.0.1:9050 or http://proxy:8080)")
 	proxyList   := flag.String("proxy-list", "", "Path to file with proxy list (round-robin rotation)")
 	silent      := flag.Bool("silent", false, "Silent mode: only print matched URLs (no banner/logs)")
 	uniqueDomain := flag.Bool("u", false, "Only output 1 URL per unique root domain")
 	threads     := flag.Int("t", 1, "Number of concurrent dork searches (default: 1)")
 	timeout     := flag.Int("timeout", 30, "HTTP request timeout in seconds (default: 30)")
-	apiKey      := flag.String("api-key", os.Getenv("GOOGLE_API_KEY"), "Google Custom Search JSON API Key (optional, zero-captcha)")
-	cx          := flag.String("cx", os.Getenv("GOOGLE_CX"), "Google Custom Search Engine ID / CX (optional, zero-captcha)")
+	apiKey      := flag.String("api-key", os.Getenv("GOOGLE_API_KEY"), "Google Custom Search JSON API Key (for google-api engine)")
+	cx          := flag.String("cx", os.Getenv("GOOGLE_CX"), "Google Custom Search Engine ID / CX (for google-api engine)")
 	noColor     := flag.Bool("nc", false, "Disable colored output")
 	version     := flag.Bool("version", false, "Print version and exit")
 
@@ -67,7 +68,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Println("dorkx v1.1.0")
+		fmt.Println("dorkx v1.2.0")
 		os.Exit(0)
 	}
 
@@ -112,10 +113,25 @@ func main() {
 
 	// Select Search Engine
 	var searchEngine engine.Engine
-	if *apiKey != "" && *cx != "" {
-		searchEngine = engine.NewGoogleCSEEngine(*apiKey, *cx)
-	} else {
+	switch strings.ToLower(*engineName) {
+	case "google":
 		searchEngine = engine.NewGoogleEngine()
+	case "google-api", "cse":
+		if *apiKey == "" || *cx == "" {
+			output.Errorf("Google API requires -api-key and -cx flags (or GOOGLE_API_KEY & GOOGLE_CX env vars)\n")
+			os.Exit(1)
+		}
+		searchEngine = engine.NewGoogleCSEEngine(*apiKey, *cx)
+	case "all":
+		if *apiKey != "" && *cx != "" {
+			searchEngine = engine.NewMultiEngine(engine.NewYahooEngine(), engine.NewGoogleCSEEngine(*apiKey, *cx))
+		} else {
+			searchEngine = engine.NewMultiEngine(engine.NewYahooEngine(), engine.NewGoogleEngine())
+		}
+	case "yahoo":
+		fallthrough
+	default:
+		searchEngine = engine.NewYahooEngine()
 	}
 
 	// --- Build Config ---
@@ -166,32 +182,31 @@ func readLines(path string) ([]string, error) {
 
 func printUsage() {
 	fmt.Print(`
-DorkX - Google Dork CLI Tool by Fr0z3n_1c3
+DorkX - Dork Search & URL Extractor CLI by Fr0z3n_1c3
 
 USAGE:
   dorkx [flags]
 
 INPUT FLAGS:
-  -d "query"         Single dork query string
+  -d "query"         Single dork query string (e.g: -d "inurl:php?id=")
   -l file.txt        File containing dorks, one per line
                      (Also accepts STDIN pipe: cat dorks.txt | dorkx)
 
-SEARCH FLAGS:
-  -p  int            Number of Google result pages per dork (default: 3)
-  -t  int            Concurrent dork searches (default: 1)
-  -delay "min-max"   Delay range in seconds between requests (default: "2-5")
-  -timeout int       HTTP timeout per request in seconds (default: 30)
+ENGINE FLAGS:
+  -e name            Engine: yahoo (default, zero-captcha), google, google-api, or all
+  -api-key key       Google Custom Search API Key (for google-api engine)
+  -cx id             Google Search Engine CX ID (for google-api engine)
 
-GOOGLE API FLAGS (100% Zero-Captcha & Fast):
-  -api-key key       Google Custom Search API Key (or env GOOGLE_API_KEY)
-  -cx id             Google Search Engine CX ID (or env GOOGLE_CX)
+SEARCH & FILTER FLAGS:
+  -p  int            Number of result pages per dork (default: 3)
+  -t  int            Concurrent dork searches (default: 1)
+  -delay "min-max"   Delay range in seconds between requests (default: "1-3")
+  -timeout int       HTTP timeout per request in seconds (default: 30)
+  -u                 Only output 1 URL per unique root domain
 
 PROXY FLAGS:
   -proxy   url       Single HTTP/SOCKS5 proxy (e.g: socks5://127.0.0.1:9050 or http://127.0.0.1:8080)
   -proxy-list file   File of proxies for round-robin rotation
-
-FILTER FLAGS:
-  -u                 Only output 1 URL per unique root domain
 
 OUTPUT FLAGS:
   -o  file.txt       Save results to output file
@@ -200,14 +215,15 @@ OUTPUT FLAGS:
   -version           Print version and exit
 
 EXAMPLES:
-  # Standard search with Tor / SOCKS5 proxy:
-  dorkx -d "inurl:index.php?id=" -p 3 -proxy socks5://127.0.0.1:9050
+  # Instant dork search (Zero CAPTCHA, returns real target URLs):
+  dorkx -d "inurl:php?id=" -p 3 -o results.txt
 
-  # Official Google API (100% Zero CAPTCHA, 100 free queries/day):
-  dorkx -d "inurl:php?id=" -api-key AIzaSy... -cx 012345... -o results.txt
+  # Target specific TLD with unique domains:
+  dorkx -d "site:.gov.bd inurl:page.php?id=" -u -o gov_targets.txt
 
-  # Pipe to httpx & nuclei:
-  dorkx -d "inurl:page.php?id=" -silent | httpx -silent -mc 200 | nuclei -t sqli/
+  # Pipe directly into httpx & nuclei:
+  dorkx -d "inurl:index.php?id=" -silent | httpx -silent -mc 200 | nuclei -t sqli/
 `)
 }
+
 
