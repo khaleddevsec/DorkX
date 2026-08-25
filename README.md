@@ -50,14 +50,16 @@ dorkx [flags]
 | `-l file.txt` | File with dorks, one per line |
 | `stdin` | Pipe dorks via stdin (see examples) |
 
-### Search Flags
+### Search & API Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-p int` | `3` | Number of Google result pages per dork |
 | `-t int` | `1` | Concurrent dork searches |
 | `-delay "min-max"` | `"2-5"` | Random delay between requests (seconds) |
-| `-timeout int` | `15` | HTTP timeout per request (seconds) |
+| `-timeout int` | `30` | HTTP timeout per request in seconds |
+| `-api-key key` | `""` | Google Custom Search API Key (100% Zero-Captcha) |
+| `-cx id` | `""` | Google Programmable Search Engine ID (CX) |
 
 ### Filter Flags
 
@@ -69,7 +71,7 @@ dorkx [flags]
 
 | Flag | Description |
 |------|-------------|
-| `-proxy url` | Single HTTP/SOCKS5 proxy (`http://127.0.0.1:8080`) |
+| `-proxy url` | Single HTTP/SOCKS5 proxy (`socks5://127.0.0.1:9050` or `http://127.0.0.1:8080`) |
 | `-proxy-list file` | File with proxy list (round-robin rotation) |
 
 ### Output Flags
@@ -78,6 +80,8 @@ dorkx [flags]
 |------|-------------|
 | `-o file.txt` | Save matched URLs to file |
 | `-silent` | Only print URLs (no banner/logs) — best for piping |
+| `-nc` | Disable colored output |
+| `-version` | Print version and exit |
 | `-nc` | Disable colored output |
 | `-version` | Print version and exit |
 

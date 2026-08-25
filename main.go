@@ -52,12 +52,14 @@ func main() {
 	outputFile  := flag.String("o", "", "Save results to file (e.g: -o results.txt)")
 	pages       := flag.Int("p", 3, "Number of Google result pages to scrape per dork (default: 3)")
 	delay       := flag.String("delay", "2-5", "Delay range between requests in seconds (e.g: 2-5)")
-	proxy       := flag.String("proxy", "", "HTTP/SOCKS5 proxy URL (e.g: http://127.0.0.1:8080)")
+	proxy       := flag.String("proxy", "", "HTTP/SOCKS5 proxy URL (e.g: socks5://127.0.0.1:9050 or http://proxy:8080)")
 	proxyList   := flag.String("proxy-list", "", "Path to file with proxy list (round-robin rotation)")
 	silent      := flag.Bool("silent", false, "Silent mode: only print matched URLs (no banner/logs)")
 	uniqueDomain := flag.Bool("u", false, "Only output 1 URL per unique root domain")
 	threads     := flag.Int("t", 1, "Number of concurrent dork searches (default: 1)")
-	timeout     := flag.Int("timeout", 15, "HTTP request timeout in seconds (default: 15)")
+	timeout     := flag.Int("timeout", 30, "HTTP request timeout in seconds (default: 30)")
+	apiKey      := flag.String("api-key", os.Getenv("GOOGLE_API_KEY"), "Google Custom Search JSON API Key (optional, zero-captcha)")
+	cx          := flag.String("cx", os.Getenv("GOOGLE_CX"), "Google Custom Search Engine ID / CX (optional, zero-captcha)")
 	noColor     := flag.Bool("nc", false, "Disable colored output")
 	version     := flag.Bool("version", false, "Print version and exit")
 
@@ -65,7 +67,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Println("dorkx v1.0.0")
+		fmt.Println("dorkx v1.1.0")
 		os.Exit(0)
 	}
 
@@ -108,6 +110,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Select Search Engine
+	var searchEngine engine.Engine
+	if *apiKey != "" && *cx != "" {
+		searchEngine = engine.NewGoogleCSEEngine(*apiKey, *cx)
+	} else {
+		searchEngine = engine.NewGoogleEngine()
+	}
+
 	// --- Build Config ---
 	cfg := &runner.Config{
 		Dorks:        dorks,
@@ -121,7 +131,7 @@ func main() {
 		Timeout:      *timeout,
 		OutputFile:   *outputFile,
 		NoColor:      *noColor,
-		Engine:       engine.NewGoogleEngine(),
+		Engine:       searchEngine,
 	}
 
 	// --- Run ---
@@ -156,7 +166,7 @@ func readLines(path string) ([]string, error) {
 
 func printUsage() {
 	fmt.Print(`
-dorkx - Google Dork CLI Tool by Fr0z3n_1c3
+DorkX - Google Dork CLI Tool by Fr0z3n_1c3
 
 USAGE:
   dorkx [flags]
@@ -170,14 +180,18 @@ SEARCH FLAGS:
   -p  int            Number of Google result pages per dork (default: 3)
   -t  int            Concurrent dork searches (default: 1)
   -delay "min-max"   Delay range in seconds between requests (default: "2-5")
-  -timeout int       HTTP timeout per request in seconds (default: 15)
+  -timeout int       HTTP timeout per request in seconds (default: 30)
+
+GOOGLE API FLAGS (100% Zero-Captcha & Fast):
+  -api-key key       Google Custom Search API Key (or env GOOGLE_API_KEY)
+  -cx id             Google Search Engine CX ID (or env GOOGLE_CX)
+
+PROXY FLAGS:
+  -proxy   url       Single HTTP/SOCKS5 proxy (e.g: socks5://127.0.0.1:9050 or http://127.0.0.1:8080)
+  -proxy-list file   File of proxies for round-robin rotation
 
 FILTER FLAGS:
   -u                 Only output 1 URL per unique root domain
-
-PROXY FLAGS:
-  -proxy   url       Single HTTP/SOCKS5 proxy (e.g: http://127.0.0.1:8080)
-  -proxy-list file   File of proxies for round-robin rotation
 
 OUTPUT FLAGS:
   -o  file.txt       Save results to output file
@@ -186,11 +200,14 @@ OUTPUT FLAGS:
   -version           Print version and exit
 
 EXAMPLES:
-  dorkx -d "inurl:index.php?id=" -p 5 -silent
-  dorkx -d "inurl:page.php?id=" -u -o results.txt
-  dorkx -l dorks.txt -p 3 -t 2 -silent | httpx -silent -mc 200
-  cat dorks.txt | dorkx -silent | tee targets.txt
-  dorkx -d "site:.gov.bd inurl:page.php?id=" -p 10 -delay 3-7 -o gov_targets.txt
+  # Standard search with Tor / SOCKS5 proxy:
+  dorkx -d "inurl:index.php?id=" -p 3 -proxy socks5://127.0.0.1:9050
 
+  # Official Google API (100% Zero CAPTCHA, 100 free queries/day):
+  dorkx -d "inurl:php?id=" -api-key AIzaSy... -cx 012345... -o results.txt
+
+  # Pipe to httpx & nuclei:
+  dorkx -d "inurl:page.php?id=" -silent | httpx -silent -mc 200 | nuclei -t sqli/
 `)
 }
+

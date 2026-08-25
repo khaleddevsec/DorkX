@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -24,7 +25,6 @@ type Engine interface {
 }
 
 // ---- User-Agent Pool --------------------------------------------------------
-// Real browser UAs to rotate and avoid fingerprinting
 var userAgents = []string{
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
@@ -33,7 +33,7 @@ var userAgents = []string{
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0",
+	"Mozilla/5.0 (X11; Linux x86_64) rv:123.0 Gecko/20100101 Firefox/123.0",
 }
 
 func randomUA() string {
@@ -52,23 +52,25 @@ func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 
+	effectiveTimeout := timeout
+	if effectiveTimeout <= 0 {
+		effectiveTimeout = 30
+	}
+
 	return &http.Client{
 		Transport: transport,
-		Timeout:   time.Duration(timeout) * time.Second,
-		// Do NOT follow redirects automatically so we can inspect the raw href
+		Timeout:   time.Duration(effectiveTimeout) * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
 }
 
-// buildHeaders returns realistic browser-like HTTP headers
 func buildHeaders(referer string) map[string]string {
 	return map[string]string{
 		"User-Agent":                randomUA(),
 		"Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
 		"Accept-Language":           "en-US,en;q=0.9",
-		"Accept-Encoding":           "gzip, deflate, br",
 		"Connection":                "keep-alive",
 		"Upgrade-Insecure-Requests": "1",
 		"Sec-Fetch-Dest":            "document",
@@ -100,7 +102,7 @@ func fetchPage(client *http.Client, targetURL string, headers map[string]string)
 		return "", fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024)) // 2MB max
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 	if err != nil {
 		return "", err
 	}
@@ -108,25 +110,22 @@ func fetchPage(client *http.Client, targetURL string, headers map[string]string)
 	return string(body), nil
 }
 
-// ---- Google Engine ----------------------------------------------------------
+// ---- Google HTML Engine -----------------------------------------------------
 
-// GoogleEngine scrapes Google Search HTML pages directly
 type GoogleEngine struct{}
 
 func NewGoogleEngine() *GoogleEngine {
 	return &GoogleEngine{}
 }
 
-func (g *GoogleEngine) Name() string { return "Google" }
+func (g *GoogleEngine) Name() string { return "Google (HTML Scraper)" }
 
-// hrefRe extracts raw href values from anchor tags
 var hrefRe = regexp.MustCompile(`href=["'](/url\?q=[^"'&]+|https?://[^"'\s>]+)["' >]`)
 
 func (g *GoogleEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
 	start := page * 10
 	encoded := url.QueryEscape(dork)
 
-	// Google search URL: hl=en forces English, num=10 is standard (100 often triggers captcha faster)
 	searchURL := fmt.Sprintf(
 		"https://www.google.com/search?q=%s&hl=en&start=%d&filter=0",
 		encoded, start,
@@ -140,7 +139,6 @@ func (g *GoogleEngine) Search(dork string, page int, proxyURL *url.URL, timeout 
 		return nil, err
 	}
 
-	// Check for captcha / block page
 	lowerBody := strings.ToLower(body)
 	if strings.Contains(lowerBody, "detected unusual traffic") ||
 		strings.Contains(lowerBody, "recaptcha") ||
@@ -148,7 +146,6 @@ func (g *GoogleEngine) Search(dork string, page int, proxyURL *url.URL, timeout 
 		return nil, fmt.Errorf("CAPTCHA or rate-limit detected on page %d", page+1)
 	}
 
-	// Extract all hrefs from the page
 	var results []Result
 	seen := make(map[string]bool)
 
@@ -159,12 +156,10 @@ func (g *GoogleEngine) Search(dork string, page int, proxyURL *url.URL, timeout 
 		}
 		raw := match[1]
 
-		// Unwrap Google redirect
 		if strings.HasPrefix(raw, "/url?q=") {
-			raw = "/url?q=" + raw[7:] // keep prefix so ExtractRealURL works
+			raw = "/url?q=" + raw[7:]
 		}
 
-		// Also directly capture https:// links from href
 		if !strings.HasPrefix(raw, "http") && !strings.HasPrefix(raw, "/url") {
 			continue
 		}
@@ -172,6 +167,80 @@ func (g *GoogleEngine) Search(dork string, page int, proxyURL *url.URL, timeout 
 		if !seen[raw] {
 			seen[raw] = true
 			results = append(results, Result{RawURL: raw, Source: g.Name()})
+		}
+	}
+
+	return results, nil
+}
+
+// ---- Google Custom Search (CSE) API Engine -----------------------------------
+
+type GoogleCSEEngine struct {
+	APIKey string
+	CX     string
+}
+
+func NewGoogleCSEEngine(apiKey, cx string) *GoogleCSEEngine {
+	return &GoogleCSEEngine{
+		APIKey: apiKey,
+		CX:     cx,
+	}
+}
+
+func (g *GoogleCSEEngine) Name() string { return "Google (Official Custom Search API)" }
+
+type googleCSEJSONResponse struct {
+	Items []struct {
+		Link  string `json:"link"`
+		Title string `json:"title"`
+	} `json:"items"`
+	Error *struct {
+		Message string `json:"message"`
+		Code    int    `json:"code"`
+	} `json:"error"`
+}
+
+func (g *GoogleCSEEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
+	// Google CSE uses 1-based start index (1, 11, 21...)
+	start := (page * 10) + 1
+	apiURL := fmt.Sprintf(
+		"https://www.googleapis.com/customsearch/v1?key=%s&cx=%s&q=%s&start=%d",
+		url.QueryEscape(g.APIKey),
+		url.QueryEscape(g.CX),
+		url.QueryEscape(dork),
+		start,
+	)
+
+	client := buildClient(proxyURL, timeout)
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var jsonRes googleCSEJSONResponse
+	if err := json.Unmarshal(body, &jsonRes); err != nil {
+		return nil, fmt.Errorf("JSON parse error: %v", err)
+	}
+
+	if jsonRes.Error != nil {
+		return nil, fmt.Errorf("Google API Error (%d): %s", jsonRes.Error.Code, jsonRes.Error.Message)
+	}
+
+	var results []Result
+	for _, item := range jsonRes.Items {
+		if item.Link != "" {
+			results = append(results, Result{RawURL: item.Link, Source: g.Name()})
 		}
 	}
 
