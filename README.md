@@ -44,18 +44,11 @@ DorkX is a high-performance reconnaissance CLI tool designed to find and collect
 ### Method 1: Build from Source (Linux / WSL / macOS)
 
 ```bash
-cd ~
-mkdir -p DorkX
-git clone https://github.com/frozeniceee/DorkX.git DorkX
+git clone https://github.com/frozeniceee/DorkX.git
 cd DorkX
-
-# Build the binary
 go build -o dorkx .
-sudo mv dorkx /usr/local/bin/
-
-# Alternatively, if your Go bin directory is customized:
-# /usr/local/go/bin/go build -o dorkx .
-# cp -f dorkx /usr/local/go/bin/dorkx
+sudo cp -f dorkx /usr/local/bin/
+sudo cp -f dorkx /usr/local/go/bin/ 2>/dev/null || true
 ```
 
 ### Method 2: Direct Install with Go
@@ -74,32 +67,32 @@ dorkx [flags]
 
 ### 1. Basic Single Dork (Collects 50 unique targets by default)
 ```bash
-dorkx -d "inurl:php?id=" -o results.txt
+dorkx -d "Dork" -o results.txt
 ```
 
 ### 2. Collect only Live URLs Responding with HTTP 200 OK
 ```bash
-dorkx -d "inurl:index.php?id=" -status-code -mc 200 -limit 50 -o live_targets.txt
+dorkx -d "Dork" -status-code -mc 200 -limit 50 -o live_targets.txt
 ```
 
 ### 3. Collect an Exact Number of Targets (e.g. 100 targets)
 ```bash
-dorkx -d "inurl:index.php?id=" -limit 100 -o targets.txt
+dorkx -d "Dork" -limit 100 -o targets.txt
 ```
 
 ### 4. Exclude Noise Domains & Keywords
 ```bash
-dorkx -d "inurl:php?id= -github -stackoverflow -.gov.bd -demo" -limit 50 -o clean_targets.txt
+dorkx -d "Dork -github -stackoverflow -.gov.bd" -limit 50 -o clean_targets.txt
 ```
 
 ### 5. Target Specific Country / TLD with 1 URL per Domain (`-u`)
 ```bash
-dorkx -d "site:.gov.bd inurl:page.php?id=" -limit 30 -u -o gov_targets.txt
+dorkx -d "site:.gov.bd Dork" -limit 30 -u -o gov_targets.txt
 ```
 
 ### 6. Pipe into `httpx` and `nuclei` (Bug Bounty Pipeline)
 ```bash
-dorkx -d "inurl:index.php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
+dorkx -d "Dork" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
 ```
 
 ### 7. Bulk Dorking from File
