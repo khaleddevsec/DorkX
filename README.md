@@ -73,27 +73,32 @@ dorkx [flags]
 dorkx -d "inurl:php?id=" -o results.txt
 ```
 
-### 2. Collect an Exact Number of Targets (e.g. 100 targets)
+### 2. Collect only Live URLs Responding with HTTP 200 OK
+```bash
+dorkx -d "inurl:index.php?id=" -status-code -mc 200 -limit 50 -o live_targets.txt
+```
+
+### 3. Collect an Exact Number of Targets (e.g. 100 targets)
 ```bash
 dorkx -d "inurl:index.php?id=" -limit 100 -o targets.txt
 ```
 
-### 3. Exclude Noise Domains & Keywords
+### 4. Exclude Noise Domains & Keywords
 ```bash
 dorkx -d "inurl:php?id= -github -stackoverflow -.gov.bd -demo" -limit 50 -o clean_targets.txt
 ```
 
-### 4. Target Specific Country / TLD with 1 URL per Domain (`-u`)
+### 5. Target Specific Country / TLD with 1 URL per Domain (`-u`)
 ```bash
 dorkx -d "site:.gov.bd inurl:page.php?id=" -limit 30 -u -o gov_targets.txt
 ```
 
-### 5. Pipe into `httpx` and `nuclei` (Bug Bounty Pipeline)
+### 6. Pipe into `httpx` and `nuclei` (Bug Bounty Pipeline)
 ```bash
 dorkx -d "inurl:index.php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
 ```
 
-### 6. Bulk Dorking from File
+### 7. Bulk Dorking from File
 ```bash
 dorkx -l dorks.txt -limit 50 -t 2 -o all_results.txt
 ```
@@ -111,6 +116,8 @@ dorkx -l dorks.txt -limit 50 -t 2 -o all_results.txt
 | **Collection & Filtering** | | | |
 | `-limit` | `int` | `50` | Target number of unique strictly-matched URLs to collect |
 | `-u` | `bool` | `false` | Unique domain mode: only output 1 URL per root domain |
+| `-status-code`, `-sc` | `bool` | `false` | Live probe: verify and display HTTP status code (e.g. `[200]`) |
+| `-mc` | `string` | `""` | Match status code filter (e.g. `-mc 200` or `-mc 200,301`) |
 | `-t` | `int` | `1` | Number of concurrent dork searches |
 | `-delay` | `string` | `"1-2"` | Delay range in seconds between batch requests |
 | `-timeout` | `int` | `25` | HTTP request timeout in seconds |

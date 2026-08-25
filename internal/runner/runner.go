@@ -2,8 +2,10 @@ package runner
 
 import (
 	"bufio"
+	"crypto/tls"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -21,7 +23,7 @@ import (
 type Config struct {
 	Dorks        []string
 	Limit        int    // Target number of unique results per dork (e.g: 50)
-	DelayRange   string // "min-max" seconds e.g. "1-3"
+	DelayRange   string // "min-max" seconds e.g. "1-2"
 	Proxy        string
 	ProxyList    string
 	Silent       bool
@@ -30,6 +32,8 @@ type Config struct {
 	Timeout      int
 	OutputFile   string
 	NoColor      bool
+	StatusCode   bool   // Probe and display HTTP status code
+	MatchCode    string // Filter by HTTP status code (e.g. "200" or "200,301")
 	Engine       engine.Engine
 }
 
@@ -40,11 +44,13 @@ type Runner struct {
 	mu          sync.Mutex
 	seenURLs    map[string]bool
 	seenDomains map[string]bool
+	matchCodes  map[int]bool
 	outWriter   *bufio.Writer
 	outFile     *os.File
 	totalFound  int
 	delayMin    float64
 	delayMax    float64
+	probeClient *http.Client
 }
 
 // New constructs a Runner from a Config
@@ -52,17 +58,76 @@ func New(cfg *Config) *Runner {
 	output.NoColor = cfg.NoColor
 
 	if cfg.Limit <= 0 {
-		cfg.Limit = 50 // default to 50 results
+		cfg.Limit = 50
 	}
 
 	r := &Runner{
 		cfg:         cfg,
 		seenURLs:    make(map[string]bool),
 		seenDomains: make(map[string]bool),
+		matchCodes:  make(map[int]bool),
+	}
+
+	// Parse match codes if provided
+	if cfg.MatchCode != "" {
+		for _, part := range strings.Split(cfg.MatchCode, ",") {
+			part = strings.TrimSpace(part)
+			if code, err := strconv.Atoi(part); err == nil {
+				r.matchCodes[code] = true
+			}
+		}
 	}
 
 	r.delayMin, r.delayMax = parseDelay(cfg.DelayRange)
+
+	// Built-in lightweight probe client
+	r.probeClient = &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			DisableKeepAlives: true,
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return http.ErrUseLastResponse
+			}
+			return nil
+		},
+	}
+
 	return r
+}
+
+// probeURL makes a quick GET request to check HTTP status code
+func (r *Runner) probeURL(target string, proxyURL *url.URL) int {
+	req, err := http.NewRequest("GET", target, nil)
+	if err != nil {
+		return 0
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "*/*")
+
+	client := r.probeClient
+	if proxyURL != nil {
+		tr := &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			DisableKeepAlives: true,
+		}
+		client = &http.Client{
+			Transport: tr,
+			Timeout: 6 * time.Second,
+		}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode
 }
 
 // Run executes all dorks, respects concurrency, writes results
@@ -109,6 +174,12 @@ func (r *Runner) Run() {
 	if !r.cfg.Silent {
 		output.Infof("Engine: %s | Target Limit: %d | Threads: %d | Delay: %s\n",
 			r.cfg.Engine.Name(), r.cfg.Limit, r.cfg.Threads, r.cfg.DelayRange)
+		if r.cfg.StatusCode {
+			output.Infof("Live Probe: Enabled (-status-code)\n")
+		}
+		if len(r.matchCodes) > 0 {
+			output.Infof("Match Status Code: %s\n", r.cfg.MatchCode)
+		}
 		output.Infof("Total dorks to process: %d\n\n", len(r.cfg.Dorks))
 	}
 
@@ -153,6 +224,9 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 		}
 		if len(rule.SiteSuffixes) > 0 {
 			output.Grayf("  ↳ Site filter: %v\n", rule.SiteSuffixes)
+		}
+		if len(rule.ExcludedTerms) > 0 || len(rule.ExcludedSites) > 0 || len(rule.ExcludedInURLs) > 0 {
+			output.Grayf("  ↳ Exclusions: %v %v %v\n", rule.ExcludedTerms, rule.ExcludedSites, rule.ExcludedInURLs)
 		}
 	}
 
@@ -214,18 +288,38 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 				continue
 			}
 
+			// Live Status Code Probe (if -status-code or -mc is set)
+			statusCode := 0
+			if r.cfg.StatusCode || len(r.matchCodes) > 0 {
+				statusCode = r.probeURL(cleaned, proxyURL)
+
+				// Filter by match code if specified (e.g. -mc 200)
+				if len(r.matchCodes) > 0 && !r.matchCodes[statusCode] {
+					continue
+				}
+			}
+
 			r.mu.Lock()
 			r.seenURLs[cleaned] = true
 			r.seenDomains[domainKey] = true
 			r.totalFound++
 			r.mu.Unlock()
 
-			// Print to stdout (clean for piping)
-			output.Result(cleaned)
+			// Print to stdout
+			if r.cfg.StatusCode && statusCode > 0 {
+				output.ResultWithStatus(cleaned, statusCode)
+			} else {
+				output.Result(cleaned)
+			}
 
+			// Write to output file
 			if r.outWriter != nil {
 				r.mu.Lock()
-				fmt.Fprintln(r.outWriter, cleaned)
+				if r.cfg.StatusCode && statusCode > 0 {
+					fmt.Fprintf(r.outWriter, "%s [%d]\n", cleaned, statusCode)
+				} else {
+					fmt.Fprintln(r.outWriter, cleaned)
+				}
 				r.mu.Unlock()
 			}
 
@@ -273,12 +367,12 @@ func (r *Runner) sleep() {
 func parseDelay(s string) (float64, float64) {
 	parts := strings.Split(s, "-")
 	if len(parts) != 2 {
-		return 1.0, 3.0
+		return 1.0, 2.0
 	}
 	min, err1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
 	max, err2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
 	if err1 != nil || err2 != nil {
-		return 1.0, 3.0
+		return 1.0, 2.0
 	}
 	if min > max {
 		min, max = max, min

@@ -57,6 +57,9 @@ func main() {
 	proxyList    := flag.String("proxy-list", "", "Path to file with proxy list (round-robin rotation)")
 	silent       := flag.Bool("silent", false, "Silent mode: only print matched URLs (no banner/logs)")
 	uniqueDomain := flag.Bool("u", false, "Only output 1 URL per unique root domain")
+	statusCode   := flag.Bool("status-code", false, "Probe and display HTTP status code (e.g: [200])")
+	scShort      := flag.Bool("sc", false, "Alias for -status-code")
+	matchCode    := flag.String("mc", "", "Match HTTP status code filter (e.g: -mc 200 or -mc 200,301)")
 	threads      := flag.Int("t", 1, "Number of concurrent dork searches (default: 1)")
 	timeout      := flag.Int("timeout", 25, "HTTP request timeout in seconds (default: 25)")
 	apiKey       := flag.String("api-key", os.Getenv("GOOGLE_API_KEY"), "Google Custom Search JSON API Key (for google-api engine)")
@@ -148,6 +151,8 @@ func main() {
 		ProxyList:    *proxyList,
 		Silent:       *silent,
 		UniqueDomain: *uniqueDomain,
+		StatusCode:   *statusCode || *scShort,
+		MatchCode:    *matchCode,
 		Threads:      *threads,
 		Timeout:      *timeout,
 		OutputFile:   *outputFile,
@@ -200,6 +205,8 @@ INPUT OPTIONS:
 COLLECTION & FILTERING:
   -limit int         Target number of unique matched URLs to collect (default: 50)
   -u                 Unique root domain mode: only output 1 URL per root domain
+  -status-code, -sc  Live probe: verify and display HTTP status code (e.g: [200])
+  -mc string         Match HTTP status codes only (e.g: -mc 200 or -mc 200,301)
   -t int             Number of concurrent dork searches (default: 1)
   -delay string      Delay range between requests in seconds (default: "1-2")
   -timeout int       HTTP request timeout in seconds (default: 25)
@@ -231,16 +238,19 @@ EXAMPLES:
   # 1. Collect 50 unique SQLi targets (instant, zero-captcha):
   dorkx -d "inurl:php?id=" -o results.txt
 
-  # 2. Collect 100 targets while excluding noise domains:
+  # 2. Collect only live URLs responding with HTTP 200 OK:
+  dorkx -d "inurl:index.php?id=" -status-code -mc 200 -limit 50
+
+  # 3. Collect 100 targets while excluding noise domains:
   dorkx -d "inurl:index.php?id= -github -stackoverflow -.gov.bd" -limit 100 -o targets.txt
 
-  # 3. Target government domains with 1 URL per unique domain:
+  # 4. Target government domains with 1 URL per unique domain:
   dorkx -d "site:.gov.bd inurl:page.php?id=" -limit 30 -u -o gov_targets.txt
 
-  # 4. Recon Pipeline (Dork -> HTTP probe -> SQLi vulnerability scan):
+  # 5. Recon Pipeline (Dork -> HTTP probe -> SQLi vulnerability scan):
   dorkx -d "inurl:view.php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
 
-  # 5. Bulk scan from file with custom concurrency:
+  # 6. Bulk scan from file with custom concurrency:
   dorkx -l dorks.txt -limit 50 -t 3 -o all_targets.txt
 `)
 }
