@@ -1,0 +1,16 @@
+# dorkx - .gitignore
+
+# Compiled binary
+dorkx
+dorkx.exe
+
+# Output files
+*.txt
+!dorks.txt
+
+# Go build artifacts
+/vendor/
+
+# OS files
+.DS_Store
+Thumbs.db

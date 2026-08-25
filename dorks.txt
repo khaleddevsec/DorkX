@@ -1,0 +1,23 @@
+# SQL injection parameter hunting
+inurl:index.php?id=
+inurl:page.php?id=
+inurl:view.php?id=
+inurl:item.php?id=
+inurl:product.php?id=
+inurl:category.php?id=
+inurl:news.php?id=
+inurl:article.php?id=
+
+# Admin panels
+inurl:admin/login.php
+inurl:admin.php?user=
+inurl:administrator/index.php
+
+# File inclusion targets
+inurl:page.php?file=
+inurl:include.php?path=
+inurl:load.php?module=
+
+# Specific TLD targeting
+site:.gov.bd inurl:page.php?id=
+site:.edu inurl:index.php?id=
