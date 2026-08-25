@@ -18,7 +18,6 @@ const (
 	ansiBold   = "\033[1m"
 	ansiYellow = "\033[33m"
 	ansiGray   = "\033[90m"
-	ansiRed    = "\033[31m"
 	ansiReset  = "\033[0m"
 )
 
@@ -35,7 +34,7 @@ func printBanner() {
 	meta := ansiGray + "         by " + ansiReset +
 		ansiYellow + "Fr0z3n_1c3" + ansiReset +
 		ansiGray + " | " + ansiReset +
-		ansiCyan + "v1.2.0" + ansiReset +
+		ansiCyan + "v2.0.0" + ansiReset +
 		ansiGray + " | " + ansiReset +
 		"https://github.com/frozeniceee/DorkX"
 
@@ -47,28 +46,28 @@ func printBanner() {
 
 func main() {
 	// --- CLI Flags ---
-	dork        := flag.String("d", "", "Single dork query (e.g: \"inurl:php?id=\")")
-	list        := flag.String("l", "", "Path to file containing dorks (one per line)")
-	outputFile  := flag.String("o", "", "Save results to file (e.g: -o results.txt)")
-	engineName  := flag.String("e", "yahoo", "Search engine: yahoo (default, zero-captcha), google, google-api, or all")
-	pages       := flag.Int("p", 3, "Number of result pages to scrape per dork (default: 3)")
-	delay       := flag.String("delay", "1-3", "Delay range between requests in seconds (e.g: 1-3)")
-	proxy       := flag.String("proxy", "", "HTTP/SOCKS5 proxy URL (e.g: socks5://127.0.0.1:9050 or http://proxy:8080)")
-	proxyList   := flag.String("proxy-list", "", "Path to file with proxy list (round-robin rotation)")
-	silent      := flag.Bool("silent", false, "Silent mode: only print matched URLs (no banner/logs)")
+	dork         := flag.String("d", "", "Single dork query (e.g: \"inurl:php?id=\")")
+	list         := flag.String("l", "", "Path to file containing dorks (one per line)")
+	outputFile   := flag.String("o", "", "Save results to file (e.g: -o results.txt)")
+	limit        := flag.Int("limit", 50, "Target number of strictly-matched unique URLs to collect (default: 50)")
+	engineName   := flag.String("e", "hybrid", "Search engine: hybrid (default: Yahoo + Bing), yahoo, bing, google, google-api, or all")
+	delay        := flag.String("delay", "1-2", "Delay range between requests in seconds (default: 1-2)")
+	proxy        := flag.String("proxy", "", "HTTP/SOCKS5 proxy URL (e.g: socks5://127.0.0.1:9050 or http://proxy:8080)")
+	proxyList    := flag.String("proxy-list", "", "Path to file with proxy list (round-robin rotation)")
+	silent       := flag.Bool("silent", false, "Silent mode: only print matched URLs (no banner/logs)")
 	uniqueDomain := flag.Bool("u", false, "Only output 1 URL per unique root domain")
-	threads     := flag.Int("t", 1, "Number of concurrent dork searches (default: 1)")
-	timeout     := flag.Int("timeout", 30, "HTTP request timeout in seconds (default: 30)")
-	apiKey      := flag.String("api-key", os.Getenv("GOOGLE_API_KEY"), "Google Custom Search JSON API Key (for google-api engine)")
-	cx          := flag.String("cx", os.Getenv("GOOGLE_CX"), "Google Custom Search Engine ID / CX (for google-api engine)")
-	noColor     := flag.Bool("nc", false, "Disable colored output")
-	version     := flag.Bool("version", false, "Print version and exit")
+	threads      := flag.Int("t", 1, "Number of concurrent dork searches (default: 1)")
+	timeout      := flag.Int("timeout", 25, "HTTP request timeout in seconds (default: 25)")
+	apiKey       := flag.String("api-key", os.Getenv("GOOGLE_API_KEY"), "Google Custom Search JSON API Key (for google-api engine)")
+	cx           := flag.String("cx", os.Getenv("GOOGLE_CX"), "Google Custom Search Engine ID / CX (for google-api engine)")
+	noColor      := flag.Bool("nc", false, "Disable colored output")
+	version      := flag.Bool("version", false, "Print version and exit")
 
 	flag.Usage = printUsage
 	flag.Parse()
 
 	if *version {
-		fmt.Println("dorkx v1.2.0")
+		fmt.Println("dorkx v2.0.0")
 		os.Exit(0)
 	}
 
@@ -114,6 +113,10 @@ func main() {
 	// Select Search Engine
 	var searchEngine engine.Engine
 	switch strings.ToLower(*engineName) {
+	case "yahoo":
+		searchEngine = engine.NewYahooEngine()
+	case "bing":
+		searchEngine = engine.NewBingEngine()
 	case "google":
 		searchEngine = engine.NewGoogleEngine()
 	case "google-api", "cse":
@@ -124,20 +127,20 @@ func main() {
 		searchEngine = engine.NewGoogleCSEEngine(*apiKey, *cx)
 	case "all":
 		if *apiKey != "" && *cx != "" {
-			searchEngine = engine.NewMultiEngine(engine.NewYahooEngine(), engine.NewGoogleCSEEngine(*apiKey, *cx))
+			searchEngine = engine.NewHybridEngine(engine.NewYahooEngine(), engine.NewBingEngine(), engine.NewGoogleCSEEngine(*apiKey, *cx))
 		} else {
-			searchEngine = engine.NewMultiEngine(engine.NewYahooEngine(), engine.NewGoogleEngine())
+			searchEngine = engine.NewHybridEngine(engine.NewYahooEngine(), engine.NewBingEngine(), engine.NewGoogleEngine())
 		}
-	case "yahoo":
+	case "hybrid":
 		fallthrough
 	default:
-		searchEngine = engine.NewYahooEngine()
+		searchEngine = engine.NewHybridEngine(engine.NewYahooEngine(), engine.NewBingEngine())
 	}
 
 	// --- Build Config ---
 	cfg := &runner.Config{
 		Dorks:        dorks,
-		Pages:        *pages,
+		Limit:        *limit,
 		DelayRange:   *delay,
 		Proxy:        *proxy,
 		ProxyList:    *proxyList,
@@ -182,7 +185,7 @@ func readLines(path string) ([]string, error) {
 
 func printUsage() {
 	fmt.Print(`
-DorkX - Dork Search & URL Extractor CLI by Fr0z3n_1c3
+DorkX - Dork Recon & Target URL Collector CLI by Fr0z3n_1c3
 
 USAGE:
   dorkx [flags]
@@ -192,17 +195,17 @@ INPUT FLAGS:
   -l file.txt        File containing dorks, one per line
                      (Also accepts STDIN pipe: cat dorks.txt | dorkx)
 
+COLLECTION & FILTER FLAGS:
+  -limit int         Target number of unique matched URLs to collect (default: 50)
+  -u                 Only output 1 URL per unique root domain
+  -t int             Concurrent dork searches (default: 1)
+  -delay "min-max"   Delay range in seconds between requests (default: "1-2")
+  -timeout int       HTTP timeout per request in seconds (default: 25)
+
 ENGINE FLAGS:
-  -e name            Engine: yahoo (default, zero-captcha), google, google-api, or all
+  -e name            Engine: hybrid (default: Yahoo + Bing), yahoo, bing, google, google-api, or all
   -api-key key       Google Custom Search API Key (for google-api engine)
   -cx id             Google Search Engine CX ID (for google-api engine)
-
-SEARCH & FILTER FLAGS:
-  -p  int            Number of result pages per dork (default: 3)
-  -t  int            Concurrent dork searches (default: 1)
-  -delay "min-max"   Delay range in seconds between requests (default: "1-3")
-  -timeout int       HTTP timeout per request in seconds (default: 30)
-  -u                 Only output 1 URL per unique root domain
 
 PROXY FLAGS:
   -proxy   url       Single HTTP/SOCKS5 proxy (e.g: socks5://127.0.0.1:9050 or http://127.0.0.1:8080)
@@ -215,15 +218,16 @@ OUTPUT FLAGS:
   -version           Print version and exit
 
 EXAMPLES:
-  # Instant dork search (Zero CAPTCHA, returns real target URLs):
-  dorkx -d "inurl:php?id=" -p 3 -o results.txt
+  # Collect 50 unique targets instantly (Zero CAPTCHA, High Volume):
+  dorkx -d "inurl:php?id=" -o results.txt
 
-  # Target specific TLD with unique domains:
-  dorkx -d "site:.gov.bd inurl:page.php?id=" -u -o gov_targets.txt
+  # Collect 100 targets with specific dork:
+  dorkx -d "inurl:index.php?id=" -limit 100 -o targets.txt
+
+  # Target specific TLD with unique root domains:
+  dorkx -d "site:.gov.bd inurl:page.php?id=" -limit 50 -u -o gov_targets.txt
 
   # Pipe directly into httpx & nuclei:
-  dorkx -d "inurl:index.php?id=" -silent | httpx -silent -mc 200 | nuclei -t sqli/
+  dorkx -d "inurl:view.php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
 `)
 }
-
-

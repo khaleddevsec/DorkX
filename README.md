@@ -54,19 +54,19 @@ dorkx [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-e name` | `yahoo` | Search engine: `yahoo` (default, zero-captcha), `google`, `google-api`, or `all` |
+| `-e name` | `hybrid` | Search engine: `hybrid` (default: Yahoo + Bing parallel), `yahoo`, `bing`, `google`, `google-api`, or `all` |
 | `-api-key key` | `""` | Google Custom Search API Key (for `google-api` engine) |
 | `-cx id` | `""` | Google Search Engine CX ID (for `google-api` engine) |
 
-### Search & Filter Flags
+### Collection & Filter Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-p int` | `3` | Number of result pages per dork |
-| `-t int` | `1` | Concurrent dork searches |
-| `-delay "min-max"` | `"1-3"` | Random delay between requests (seconds) |
-| `-timeout int` | `30` | HTTP timeout per request in seconds |
+| `-limit int` | `50` | Target number of unique strictly-matched URLs to collect |
 | `-u` | `false` | Only output 1 URL per unique root domain |
+| `-t int` | `1` | Concurrent dork searches |
+| `-delay "min-max"` | `"1-2"` | Random delay between requests (seconds) |
+| `-timeout int` | `25` | HTTP timeout per request in seconds |
 
 ### Proxy Flags
 
@@ -88,34 +88,34 @@ dorkx [flags]
 
 ## Examples
 
-### Instant Search (Zero CAPTCHA, Real Target URLs)
+### Collect 50 Unique Targets Instantly (Default)
 
 ```bash
-dorkx -d "inurl:php?id=" -p 3 -o results.txt
+dorkx -d "inurl:php?id=" -o results.txt
 ```
 
-### Silent mode — only matched URLs to stdout
+### Collect Exact Target Count (e.g. 100 targets)
 
 ```bash
-dorkx -d "inurl:page.php?id=" -silent
+dorkx -d "inurl:index.php?id=" -limit 100 -o targets.txt
 ```
 
-### Target `.gov` sites only
+### Silent Mode — Pipe to `httpx` & `nuclei`
 
 ```bash
-dorkx -d "site:.gov.bd inurl:page.php?id=" -p 10 -o gov_targets.txt
+dorkx -d "inurl:page.php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
 ```
 
-### One result per domain (no duplicate domains)
+### Target Specific Country / TLD (.gov.bd) with Unique Domains
 
 ```bash
-dorkx -d "inurl:admin.php?id=" -u -p 5
+dorkx -d "site:.gov.bd inurl:page.php?id=" -limit 30 -u -o gov_targets.txt
 ```
 
-### Bulk dorks from a file
+### Bulk Dorks from File
 
 ```bash
-dorkx -l my_dorks.txt -p 3 -o all_results.txt
+dorkx -l dorks.txt -limit 50 -o all_results.txt
 ```
 
 ### Pipe dorks from stdin

@@ -6,14 +6,14 @@ import (
 	"strings"
 )
 
-// excludedDomains are domains we always discard (Google internals, social media, etc.)
+// excludedDomains are domains we always discard (search engines, portals, social media, etc.)
 var excludedDomains = []string{
 	"google.com", "google.co", "googleapis.com", "gstatic.com",
 	"googleusercontent.com", "youtube.com", "youtu.be",
 	"facebook.com", "twitter.com", "instagram.com", "linkedin.com",
 	"pinterest.com", "reddit.com", "wikipedia.org", "wikimedia.org",
-	"amazon.com", "ebay.com", "bing.com", "yahoo.com",
-	"w3.org", "schema.org", "archive.org",
+	"amazon.com", "ebay.com", "bing.com", "yahoo.com", "yimg.com",
+	"w3.org", "schema.org", "archive.org", "github.com",
 	"maps.google", "accounts.google", "policies.google",
 	"support.google", "translate.google", "books.google",
 	"drive.google", "docs.google", "play.google",
@@ -29,35 +29,40 @@ var excludedExtensions = []string{
 	".css", ".woff", ".woff2", ".ttf", ".eot",
 }
 
-// DorkRule holds the strict constraints extracted from a dork query
-type DorkRule struct {
-	// InURLPatterns are strings that MUST appear in the URL path+query
-	InURLPatterns []string
-	// SiteSuffixes are domain suffixes like .gov.bd, .edu that the host must end with
-	SiteSuffixes []string
-	// HasParams means the URL must contain at least one query parameter
-	HasParams bool
+// InURLRequirement stores path and parameter constraints
+type InURLRequirement struct {
+	RawPattern string
+	PathPart   string // e.g. "php" or "page.php"
+	ParamPart  string // e.g. "id=" or "id"
 }
 
-// ExtractRulesFromDork parses a dork query string and extracts strict matching rules.
-// Example: "site:.gov.bd inurl:page.php?id=" =>
-//   InURLPatterns: ["page.php?id="]
-//   SiteSuffixes:  [".gov.bd"]
+// DorkRule holds the strict constraints extracted from a dork query
+type DorkRule struct {
+	InURLReqs    []InURLRequirement
+	SiteSuffixes []string
+	RawDork      string
+}
+
+// ExtractRulesFromDork parses a dork query string and extracts smart strict matching rules.
 func ExtractRulesFromDork(dork string) *DorkRule {
-	rule := &DorkRule{}
+	rule := &DorkRule{RawDork: dork}
 
 	// Extract inurl: patterns
 	inurlRe := regexp.MustCompile(`(?i)inurl:["']?([^\s"']+)["']?`)
 	for _, match := range inurlRe.FindAllStringSubmatch(dork, -1) {
 		if len(match) > 1 {
-			pattern := strings.Trim(match[1], `"'`)
-			if pattern != "" {
-				rule.InURLPatterns = append(rule.InURLPatterns, strings.ToLower(pattern))
-				// If any inurl pattern contains "?", that means we need query params
-				if strings.Contains(pattern, "?") || strings.Contains(pattern, "=") {
-					rule.HasParams = true
-				}
+			rawPattern := strings.ToLower(strings.Trim(match[1], `"'`))
+			if rawPattern == "" {
+				continue
 			}
+
+			req := InURLRequirement{RawPattern: rawPattern}
+			if strings.Contains(rawPattern, "?") {
+				parts := strings.SplitN(rawPattern, "?", 2)
+				req.PathPart = parts[0]
+				req.ParamPart = parts[1]
+			}
+			rule.InURLReqs = append(rule.InURLReqs, req)
 		}
 	}
 
@@ -65,9 +70,9 @@ func ExtractRulesFromDork(dork string) *DorkRule {
 	siteRe := regexp.MustCompile(`(?i)site:["']?([^\s"']+)["']?`)
 	for _, match := range siteRe.FindAllStringSubmatch(dork, -1) {
 		if len(match) > 1 {
-			site := strings.Trim(match[1], `"'`)
+			site := strings.ToLower(strings.Trim(match[1], `"'`))
 			if site != "" {
-				rule.SiteSuffixes = append(rule.SiteSuffixes, strings.ToLower(site))
+				rule.SiteSuffixes = append(rule.SiteSuffixes, site)
 			}
 		}
 	}
@@ -75,8 +80,7 @@ func ExtractRulesFromDork(dork string) *DorkRule {
 	return rule
 }
 
-// IsValidURL returns true if the URL passes all strict dork rules.
-// This is the core filter. Any URL that doesn't satisfy ALL rules is discarded.
+// IsValidURL returns true if the URL satisfies all strict dork rules.
 func IsValidURL(rawURL string, rule *DorkRule) bool {
 	if rawURL == "" {
 		return false
@@ -93,9 +97,11 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 	}
 
 	host := strings.ToLower(parsed.Hostname())
+	path := strings.ToLower(parsed.Path)
+	query := strings.ToLower(parsed.RawQuery)
 	fullURL := strings.ToLower(rawURL)
 
-	// 1. Reject known garbage domains
+	// 1. Reject known garbage/portal domains
 	for _, excluded := range excludedDomains {
 		if strings.Contains(host, excluded) {
 			return false
@@ -103,22 +109,22 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 	}
 
 	// 2. Reject static asset extensions
-	path := strings.ToLower(parsed.Path)
 	for _, ext := range excludedExtensions {
 		if strings.HasSuffix(path, ext) {
 			return false
 		}
 	}
 
-	// 3. Reject Google tracking/redirect URLs
-	if strings.Contains(fullURL, "/url?q=") || strings.Contains(fullURL, "google.com/search") {
+	// 3. Reject search engine loopbacks
+	if strings.Contains(fullURL, "/url?q=") ||
+		strings.Contains(fullURL, "/search?") ||
+		strings.Contains(fullURL, "search.yahoo") ||
+		strings.Contains(fullURL, "bing.com") {
 		return false
 	}
 
-	// 4. Enforce site: constraint — host must end with or equal the site pattern
+	// 4. Enforce site: constraint
 	for _, suffix := range rule.SiteSuffixes {
-		// site:example.com means exact host match
-		// site:.gov.bd means host must end with .gov.bd
 		if strings.HasPrefix(suffix, ".") {
 			if !strings.HasSuffix(host, suffix) {
 				return false
@@ -130,39 +136,59 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 		}
 	}
 
-	// 5. Enforce inurl: pattern — the pattern must appear in the path+query of the URL
-	//    We reconstruct path+query so we check where the pattern sits, NOT in the domain
-	pathAndQuery := strings.ToLower(parsed.Path)
-	if parsed.RawQuery != "" {
-		pathAndQuery += "?" + strings.ToLower(parsed.RawQuery)
-	}
-
-	for _, pattern := range rule.InURLPatterns {
-		if !strings.Contains(pathAndQuery, pattern) {
-			return false
+	// 5. Enforce inurl: constraint
+	for _, req := range rule.InURLReqs {
+		pathAndQuery := path
+		if query != "" {
+			pathAndQuery += "?" + query
 		}
+
+		// Direct substring check
+		if strings.Contains(pathAndQuery, req.RawPattern) {
+			continue
+		}
+
+		// Multi-part check (e.g. php?id= matched across path + query params)
+		if req.PathPart != "" && req.ParamPart != "" {
+			// Path must contain pathPart (e.g. .php or php)
+			pathMatches := strings.Contains(path, req.PathPart)
+			// Query must contain paramPart (e.g. id= or id)
+			queryMatches := strings.Contains(query, req.ParamPart) || strings.Contains(query, strings.TrimSuffix(req.ParamPart, "=")+"=")
+
+			if pathMatches && queryMatches {
+				continue
+			}
+		}
+
+		return false
 	}
 
 	return true
 }
 
-// ExtractRealURL unwraps Google redirect URLs like /url?q=https://target.com/...
+// ExtractRealURL unwraps search engine redirects (Google, Yahoo, Bing, etc.)
 func ExtractRealURL(raw string) string {
 	if strings.Contains(raw, "/url?q=") {
 		parts := strings.SplitN(raw, "/url?q=", 2)
 		if len(parts) == 2 {
-			// Strip everything after & (Google tracking params)
 			target := strings.SplitN(parts[1], "&", 2)[0]
-			// URL-decode basic escapes
-			target = strings.ReplaceAll(target, "%3A", ":")
-			target = strings.ReplaceAll(target, "%2F", "/")
-			target = strings.ReplaceAll(target, "%3F", "?")
-			target = strings.ReplaceAll(target, "%3D", "=")
-			target = strings.ReplaceAll(target, "%26", "&")
-			return target
+			return unescapeURL(target)
 		}
 	}
-	return raw
+	return unescapeURL(raw)
+}
+
+func unescapeURL(target string) string {
+	target = strings.ReplaceAll(target, "%3A", ":")
+	target = strings.ReplaceAll(target, "%3a", ":")
+	target = strings.ReplaceAll(target, "%2F", "/")
+	target = strings.ReplaceAll(target, "%2f", "/")
+	target = strings.ReplaceAll(target, "%3F", "?")
+	target = strings.ReplaceAll(target, "%3f", "?")
+	target = strings.ReplaceAll(target, "%3D", "=")
+	target = strings.ReplaceAll(target, "%3d", "=")
+	target = strings.ReplaceAll(target, "%26", "&")
+	return target
 }
 
 // RootDomain extracts the root domain (host) from a URL for deduplication.
@@ -172,7 +198,5 @@ func RootDomain(rawURL string) string {
 		return rawURL
 	}
 	host := strings.ToLower(parsed.Hostname())
-	// Strip www.
-	host = strings.TrimPrefix(host, "www.")
-	return host
+	return strings.TrimPrefix(host, "www.")
 }

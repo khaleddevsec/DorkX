@@ -2,6 +2,7 @@ package engine
 
 import (
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -29,10 +31,9 @@ type Engine interface {
 var userAgents = []string{
 	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
-	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
 }
 
 func randomUA() string {
@@ -44,7 +45,7 @@ func randomUA() string {
 func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 	transport := &http.Transport{
 		DisableKeepAlives: false,
-		MaxIdleConns:      10,
+		MaxIdleConns:      20,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
 	}
 
@@ -54,7 +55,7 @@ func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 
 	effectiveTimeout := timeout
 	if effectiveTimeout <= 0 {
-		effectiveTimeout = 30
+		effectiveTimeout = 25
 	}
 
 	return &http.Client{
@@ -66,7 +67,7 @@ func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 	}
 }
 
-// ---- Yahoo Engine (Default & Zero-Captcha) -----------------------------------
+// ---- Yahoo Engine ------------------------------------------------------------
 
 type YahooEngine struct{}
 
@@ -76,11 +77,12 @@ func NewYahooEngine() *YahooEngine {
 
 func (y *YahooEngine) Name() string { return "Yahoo" }
 
-var yahooRe = regexp.MustCompile(`/RU=([^/]+)/RK=`)
+var yahooRUMatch = regexp.MustCompile(`/RU=([^/]+)/RK=`)
+var yahooDirectHref = regexp.MustCompile(`href=["'](https?://[^"'\s>]+)["']`)
 
 func (y *YahooEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
-	// Yahoo pagination: b=1, 11, 21, 31... (or 1, 51, 101 with n=50)
-	start := (page * 30) + 1
+	// Yahoo pagination step (1, 11, 21, 31, 41...)
+	start := (page * 10) + 1
 	searchURL := fmt.Sprintf(
 		"https://search.yahoo.com/search?p=%s&n=30&b=%d",
 		url.QueryEscape(dork),
@@ -112,19 +114,124 @@ func (y *YahooEngine) Search(dork string, page int, proxyURL *url.URL, timeout i
 		return nil, err
 	}
 
+	bodyStr := string(body)
 	var results []Result
 	seen := make(map[string]bool)
 
-	matches := yahooRe.FindAllStringSubmatch(string(body), -1)
+	// 1. Match /RU=.../RK= tracking links
+	matches := yahooRUMatch.FindAllStringSubmatch(bodyStr, -1)
 	for _, m := range matches {
 		decoded, err := url.QueryUnescape(m[1])
-		if err != nil || !strings.HasPrefix(decoded, "http") {
-			continue
-		}
-
-		if !seen[decoded] {
+		if err == nil && strings.HasPrefix(decoded, "http") && !seen[decoded] {
 			seen[decoded] = true
 			results = append(results, Result{RawURL: decoded, Source: y.Name()})
+		}
+	}
+
+	// 2. Match direct href links
+	directMatches := yahooDirectHref.FindAllStringSubmatch(bodyStr, -1)
+	for _, m := range directMatches {
+		u := m[1]
+		if !seen[u] && !strings.Contains(u, "yahoo.com") && !strings.Contains(u, "yimg.com") {
+			seen[u] = true
+			results = append(results, Result{RawURL: u, Source: y.Name()})
+		}
+	}
+
+	return results, nil
+}
+
+// ---- Bing Engine -------------------------------------------------------------
+
+type BingEngine struct{}
+
+func NewBingEngine() *BingEngine {
+	return &BingEngine{}
+}
+
+func (b *BingEngine) Name() string { return "Bing" }
+
+var bingCkMatch = regexp.MustCompile(`href=["'](https://www\.bing\.com/ck/a\?[^"'\s>]+)["']`)
+var bingDirectHref = regexp.MustCompile(`<h2><a\s+[^>]*href=["'](https?://[^"'\s>]+)["']`)
+
+func decodeBingRedirect(raw string) string {
+	if strings.Contains(raw, "&u=a1") || strings.Contains(raw, "&amp;u=a1") {
+		var b64 string
+		if strings.Contains(raw, "&u=a1") {
+			b64 = strings.Split(strings.Split(raw, "&u=a1")[1], "&")[0]
+		} else {
+			b64 = strings.Split(strings.Split(raw, "&amp;u=a1")[1], "&")[0]
+		}
+		switch len(b64) % 4 {
+		case 2:
+			b64 += "=="
+		case 3:
+			b64 += "="
+		}
+		b64 = strings.ReplaceAll(strings.ReplaceAll(b64, "-", "+"), "_", "/")
+		dec, err := base64.StdEncoding.DecodeString(b64)
+		if err == nil && strings.HasPrefix(string(dec), "http") {
+			return string(dec)
+		}
+	}
+	return raw
+}
+
+func (b *BingEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
+	// Bing pagination: first=1, 11, 21, 31...
+	start := (page * 10) + 1
+	searchURL := fmt.Sprintf(
+		"https://www.bing.com/search?q=%s&first=%d&count=30",
+		url.QueryEscape(dork),
+		start,
+	)
+
+	client := buildClient(proxyURL, timeout)
+	req, err := http.NewRequest("GET", searchURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", randomUA())
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 || resp.StatusCode == 503 {
+		return nil, fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+
+	bodyStr := string(body)
+	var results []Result
+	seen := make(map[string]bool)
+
+	// 1. Parse /ck/a tracking links
+	matches := bingCkMatch.FindAllStringSubmatch(bodyStr, -1)
+	for _, m := range matches {
+		decoded := decodeBingRedirect(m[1])
+		if !seen[decoded] && !strings.Contains(decoded, "bing.com") && !strings.Contains(decoded, "microsoft.com") {
+			seen[decoded] = true
+			results = append(results, Result{RawURL: decoded, Source: b.Name()})
+		}
+	}
+
+	// 2. Parse direct h2/a links
+	directMatches := bingDirectHref.FindAllStringSubmatch(bodyStr, -1)
+	for _, m := range directMatches {
+		u := m[1]
+		if !seen[u] && !strings.Contains(u, "bing.com") && !strings.Contains(u, "microsoft.com") {
+			seen[u] = true
+			results = append(results, Result{RawURL: u, Source: b.Name()})
 		}
 	}
 
@@ -180,7 +287,7 @@ func (g *GoogleEngine) Search(dork string, page int, proxyURL *url.URL, timeout 
 	if strings.Contains(lowerBody, "detected unusual traffic") ||
 		strings.Contains(lowerBody, "recaptcha") ||
 		strings.Contains(lowerBody, "sorry/index") {
-		return nil, fmt.Errorf("CAPTCHA or rate-limit detected on page %d", page+1)
+		return nil, fmt.Errorf("CAPTCHA detected on Google")
 	}
 
 	var results []Result
@@ -218,10 +325,7 @@ type GoogleCSEEngine struct {
 }
 
 func NewGoogleCSEEngine(apiKey, cx string) *GoogleCSEEngine {
-	return &GoogleCSEEngine{
-		APIKey: apiKey,
-		CX:     cx,
-	}
+	return &GoogleCSEEngine{APIKey: apiKey, CX: cx}
 }
 
 func (g *GoogleCSEEngine) Name() string { return "Google (Custom Search API)" }
@@ -283,40 +387,52 @@ func (g *GoogleCSEEngine) Search(dork string, page int, proxyURL *url.URL, timeo
 	return results, nil
 }
 
-// ---- Multi-Engine Provider ---------------------------------------------------
+// ---- Hybrid Multi-Engine Pool ------------------------------------------------
 
-type MultiEngine struct {
+type HybridEngine struct {
 	engines []Engine
 }
 
-func NewMultiEngine(engines ...Engine) *MultiEngine {
-	return &MultiEngine{engines: engines}
+func NewHybridEngine(engines ...Engine) *HybridEngine {
+	if len(engines) == 0 {
+		engines = []Engine{NewYahooEngine(), NewBingEngine()}
+	}
+	return &HybridEngine{engines: engines}
 }
 
-func (m *MultiEngine) Name() string {
+func (h *HybridEngine) Name() string {
 	var names []string
-	for _, e := range m.engines {
+	for _, e := range h.engines {
 		names = append(names, e.Name())
 	}
 	return strings.Join(names, " + ")
 }
 
-func (m *MultiEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
+func (h *HybridEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
 	var allResults []Result
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 	seen := make(map[string]bool)
 
-	for _, eng := range m.engines {
-		res, err := eng.Search(dork, page, proxyURL, timeout)
-		if err != nil {
-			continue // fallback smoothly to next engine
-		}
-		for _, r := range res {
-			if !seen[r.RawURL] {
-				seen[r.RawURL] = true
-				allResults = append(allResults, r)
+	for _, eng := range h.engines {
+		wg.Add(1)
+		go func(e Engine) {
+			defer wg.Done()
+			res, err := e.Search(dork, page, proxyURL, timeout)
+			if err != nil {
+				return
 			}
-		}
+			mu.Lock()
+			for _, r := range res {
+				if !seen[r.RawURL] {
+					seen[r.RawURL] = true
+					allResults = append(allResults, r)
+				}
+			}
+			mu.Unlock()
+		}(eng)
 	}
 
+	wg.Wait()
 	return allResults, nil
 }
