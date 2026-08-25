@@ -23,35 +23,39 @@
 
 ---
 
-## ⚡ What is DorkX?
+## Overview
 
-**DorkX** is a high-performance reconnaissance CLI tool designed to find and collect strictly-matching target URLs using search engine dorks. Built to seamlessly integrate into UNIX security pipelines alongside tools like `httpx`, `nuclei`, `subfinder`, and `katana`.
+DorkX is a high-performance reconnaissance CLI tool designed to find and collect strictly-matching target URLs using search engine dorks. Built to seamlessly integrate into UNIX security pipelines alongside tools like `httpx`, `nuclei`, `subfinder`, and `katana`.
 
-### 🔥 Key Features
+### Key Features
 
-- **🎯 Limit-Based Target Collection (`-limit 50`)**: Tell DorkX how many unique target URLs you want (e.g. 50, 100, 500) and it collects continuously until your target is met.
-- **⚡ Hybrid Multi-Engine Engine (`-e hybrid`)**: Queries **Yahoo and Bing in parallel** out of the box — **Zero CAPTCHAs, Zero Tor, Zero Proxies needed**.
-- **🧠 Smart Strict Matching**: When you search `inurl:php?id=`, DorkX strictly enforces that candidate URLs contain `.php` and an `id=` parameter (e.g. `page.php?cat=1&id=10` or `view.php?id=2`), discarding search engine noise, ads, and irrelevant pages.
-- **🚫 Full Exclusion & Negative Operators**: Supports `-term`, `-site:domain`, `-inurl:pattern`, and `filetype:` directly in queries (e.g. `inurl:php?id= -github -stackoverflow -.gov.bd`).
-- **🔗 Pipeline-First Design**: URLs are printed to `stdout` and logs to `stderr`, making it 100% pipe-compatible with `httpx` and `nuclei`.
-- **📦 Zero Dependencies**: Single compiled standalone binary with no runtime dependencies.
+- **Limit-Based Target Collection (`-limit 50`)**: Specify the exact number of unique target URLs required (e.g. 50, 100, 500), and DorkX collects continuously until the limit is reached.
+- **Hybrid Multi-Engine Engine (`-e hybrid`)**: Queries Yahoo and Bing concurrently out of the box with zero captchas, zero proxies, and no Tor setup required.
+- **Live HTTP Status Probe (`-status-code`, `-mc 200`)**: Verify if targets are live and filter out dead pages directly within DorkX.
+- **Smart Strict Matching**: Ensures candidate URLs contain required file extensions and query parameters (e.g. `page.php?cat=1&id=10` or `view.php?id=2`), discarding search engine noise, ads, and irrelevant pages.
+- **Full Exclusion & Negative Operators**: Supports `-term`, `-site:domain`, `-inurl:pattern`, and `filetype:` directly in queries (e.g. `inurl:php?id= -github -stackoverflow -.gov.bd`).
+- **Pipeline-First Design**: URLs are printed to `stdout` and logs to `stderr`, providing 100% compatibility with standard UNIX pipe workflows.
+- **Zero Dependencies**: Standalone compiled binary with no runtime dependencies.
 
 ---
 
-## 📥 Installation
+## Installation
 
 ### Method 1: Build from Source (Linux / WSL / macOS)
 
 ```bash
-# 1. Clone repository
-git clone https://github.com/frozeniceee/DorkX.git
+cd ~
+mkdir -p DorkX
+git clone https://github.com/frozeniceee/DorkX.git DorkX
 cd DorkX
 
-# 2. Build the binary
+# Build the binary
 go build -o dorkx .
-
-# 3. Move to your system bin path
 sudo mv dorkx /usr/local/bin/
+
+# Alternatively, if your Go bin directory is customized:
+# /usr/local/go/bin/go build -o dorkx .
+# cp -f dorkx /usr/local/go/bin/dorkx
 ```
 
 ### Method 2: Direct Install with Go
@@ -62,7 +66,7 @@ go install github.com/frozeniceee/DorkX@latest
 
 ---
 
-## 🚀 Quick Start & Usage
+## Quick Start & Usage
 
 ```bash
 dorkx [flags]
@@ -105,7 +109,7 @@ dorkx -l dorks.txt -limit 50 -t 2 -o all_results.txt
 
 ---
 
-## 📖 Flag Reference
+## Flag Reference
 
 | Flag | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
@@ -136,7 +140,7 @@ dorkx -l dorks.txt -limit 50 -t 2 -o all_results.txt
 
 ---
 
-## 🎯 Supported Dork Operators
+## Supported Dork Operators
 
 DorkX supports full search engine operator syntax and enforces them strictly on every returned candidate URL:
 
@@ -156,14 +160,14 @@ dorkx -d "inurl:item.php?id= -site:amazon.com -site:ebay.com -stackoverflow file
 
 ---
 
-## 🛠️ Recon Pipeline Workflows
+## Recon Pipeline Workflows
 
-### 1. Dorking $\rightarrow$ Live Host Probing with `httpx`
+### 1. Dorking to Live Host Probing with `httpx`
 ```bash
 dorkx -d "inurl:page.php?id=" -limit 50 -silent | httpx -silent -status-code -title
 ```
 
-### 2. Dorking $\rightarrow$ Vulnerability Scanning with `nuclei`
+### 2. Dorking to Vulnerability Scanning with `nuclei`
 ```bash
 dorkx -d "inurl:index.php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -tags sqli -o sqli_vulnerable.txt
 ```
@@ -175,7 +179,7 @@ dorkx -d "inurl:view.php?id=" -limit 100 -silent | tee targets.txt | httpx -sile
 
 ---
 
-## 📄 Dork List File Format (`-l`)
+## Dork List File Format (`-l`)
 
 Create a text file (e.g. `dorks.txt`) with one dork per line. Lines starting with `#` are ignored as comments:
 
@@ -201,18 +205,18 @@ dorkx -l dorks.txt -limit 30 -o bulk_targets.txt
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/frozeniceee/DorkX/issues).
+Contributions, issues, and feature requests are welcome. Feel free to check the [issues page](https://github.com/frozeniceee/DorkX/issues).
 
 ---
 
-## 📜 License
+## License
 
 This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
 ---
 
 <p align="center">
-  Made with ❤️ by <b>Fr0z3n_1c3</b>
+  Maintained by <b>Fr0z3n_1c3</b>
 </p>
