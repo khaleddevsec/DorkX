@@ -172,9 +172,9 @@ dorkx -d "inurl:view.php?id=" -limit 100 -silent | tee targets.txt | httpx -sile
 
 ---
 
-## Dork List File Format (`-l`)
+## Bulk Dork List File Format (`-l`)
 
-Create a text file (e.g. `dorks.txt`) with one dork per line. Lines starting with `#` are ignored as comments:
+Pass any text file containing dork queries (one per line). Lines starting with `#` are ignored as comments:
 
 ```text
 # SQL Injection Dorks
@@ -193,7 +193,7 @@ site:.edu inurl:index.php?id=
 
 Run in bulk:
 ```bash
-dorkx -l dorks.txt -limit 30 -o bulk_targets.txt
+dorkx -l targets_dorks.txt -limit 30 -o bulk_targets.txt
 ```
 
 ---

@@ -6,7 +6,6 @@ dorkx.exe
 
 # Output files
 *.txt
-!dorks.txt
 
 # Go build artifacts
 /vendor/
