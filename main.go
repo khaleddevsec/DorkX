@@ -12,16 +12,38 @@ import (
 	"github.com/frozeniceee/DorkX/internal/runner"
 )
 
-const banner = `
+// ANSI color codes for the banner
+const (
+	ansiCyan   = "\033[36m"
+	ansiBold   = "\033[1m"
+	ansiYellow = "\033[33m"
+	ansiGray   = "\033[90m"
+	ansiRed    = "\033[31m"
+	ansiReset  = "\033[0m"
+)
+
+func printBanner() {
+	art := ansiCyan + ansiBold + `
      _            _    __  __
   __| | ___  _ __| | _\ \/ /
  / _' |/ _ \| '__| |/ /\  /
 | (_| | (_) | |  |   < /  \
  \__,_|\___/|_|  |_|\_/_/\_\
+` + ansiReset
 
-     Google Dork CLI Tool
-     by Fr0z3n_1c3 | v1.0.0
-`
+	tagline := ansiBold + "         Google Dork CLI Tool" + ansiReset
+	meta := ansiGray + "         by " + ansiReset +
+		ansiYellow + "Fr0z3n_1c3" + ansiReset +
+		ansiGray + " | " + ansiReset +
+		ansiCyan + "v1.0.0" + ansiReset +
+		ansiGray + " | " + ansiReset +
+		"https://github.com/frozeniceee/DorkX"
+
+	fmt.Fprintln(os.Stderr, art)
+	fmt.Fprintln(os.Stderr, tagline)
+	fmt.Fprintln(os.Stderr, meta)
+	fmt.Fprintln(os.Stderr, "")
+}
 
 func main() {
 	// --- CLI Flags ---
@@ -48,7 +70,7 @@ func main() {
 	}
 
 	if !*silent {
-		fmt.Println(banner)
+		printBanner()
 	}
 
 	// --- Collect dorks from all sources ---
