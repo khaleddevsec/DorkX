@@ -2,25 +2,23 @@ package filter
 
 import (
 	"net/url"
-	"regexp"
 	"strings"
 )
 
-// excludedDomains are domains we always discard (search engines, portals, social media, etc.)
-var excludedDomains = []string{
+// defaultExcludedDomains are generic portals we always discard unless explicitly asked
+var defaultExcludedDomains = []string{
 	"google.com", "google.co", "googleapis.com", "gstatic.com",
 	"googleusercontent.com", "youtube.com", "youtu.be",
-	"facebook.com", "twitter.com", "instagram.com", "linkedin.com",
+	"facebook.com", "twitter.com", "x.com", "instagram.com", "linkedin.com",
 	"pinterest.com", "reddit.com", "wikipedia.org", "wikimedia.org",
 	"amazon.com", "ebay.com", "bing.com", "yahoo.com", "yimg.com",
-	"w3.org", "schema.org", "archive.org", "github.com",
+	"w3.org", "schema.org", "archive.org",
 	"maps.google", "accounts.google", "policies.google",
 	"support.google", "translate.google", "books.google",
-	"drive.google", "docs.google", "play.google",
 }
 
-// excludedExtensions are static asset/binary file types we never want
-var excludedExtensions = []string{
+// defaultExcludedExtensions are static asset/binary file types
+var defaultExcludedExtensions = []string{
 	".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".ico",
 	".mp4", ".mp3", ".avi", ".mkv", ".mov", ".webm",
 	".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
@@ -36,51 +34,100 @@ type InURLRequirement struct {
 	ParamPart  string // e.g. "id=" or "id"
 }
 
-// DorkRule holds the strict constraints extracted from a dork query
+// DorkRule holds the complete set of strict positive and negative constraints
 type DorkRule struct {
-	InURLReqs    []InURLRequirement
-	SiteSuffixes []string
-	RawDork      string
+	InURLReqs       []InURLRequirement
+	SiteSuffixes    []string
+	FileTypes       []string
+	ExcludedTerms   []string // e.g. -github, -stackoverflow, -.gov.bd
+	ExcludedSites   []string // e.g. -site:github.com, -site:.gov.bd
+	ExcludedInURLs  []string // e.g. -inurl:test, -inurl:demo
+	RawDork         string
 }
 
-// ExtractRulesFromDork parses a dork query string and extracts smart strict matching rules.
+// ExtractRulesFromDork parses complex dork queries with positive and negative operators.
+// Example: "inurl:php?id= -github -stackoverflow -.gov.bd filetype:php -site:demo.com"
 func ExtractRulesFromDork(dork string) *DorkRule {
 	rule := &DorkRule{RawDork: dork}
 
-	// Extract inurl: patterns
-	inurlRe := regexp.MustCompile(`(?i)inurl:["']?([^\s"']+)["']?`)
-	for _, match := range inurlRe.FindAllStringSubmatch(dork, -1) {
-		if len(match) > 1 {
-			rawPattern := strings.ToLower(strings.Trim(match[1], `"'`))
-			if rawPattern == "" {
-				continue
-			}
+	tokens := strings.Fields(dork)
+	for _, token := range tokens {
+		tLower := strings.ToLower(token)
 
-			req := InURLRequirement{RawPattern: rawPattern}
-			if strings.Contains(rawPattern, "?") {
-				parts := strings.SplitN(rawPattern, "?", 2)
-				req.PathPart = parts[0]
-				req.ParamPart = parts[1]
+		// 1. Negative inurl: (-inurl:XYZ)
+		if strings.HasPrefix(tLower, "-inurl:") {
+			val := strings.Trim(strings.TrimPrefix(token, "-inurl:"), `"'`)
+			if val != "" {
+				rule.ExcludedInURLs = append(rule.ExcludedInURLs, strings.ToLower(val))
 			}
-			rule.InURLReqs = append(rule.InURLReqs, req)
+			continue
 		}
-	}
 
-	// Extract site: constraints
-	siteRe := regexp.MustCompile(`(?i)site:["']?([^\s"']+)["']?`)
-	for _, match := range siteRe.FindAllStringSubmatch(dork, -1) {
-		if len(match) > 1 {
-			site := strings.ToLower(strings.Trim(match[1], `"'`))
+		// 2. Negative site: (-site:XYZ)
+		if strings.HasPrefix(tLower, "-site:") {
+			val := strings.Trim(strings.TrimPrefix(token, "-site:"), `"'`)
+			if val != "" {
+				rule.ExcludedSites = append(rule.ExcludedSites, strings.ToLower(val))
+			}
+			continue
+		}
+
+		// 3. Generic Negative Exclusions (-XYZ e.g. -github, -stackoverflow, -.gov.bd)
+		if strings.HasPrefix(token, "-") && len(token) > 1 && !strings.Contains(token, ":") {
+			val := strings.Trim(strings.TrimPrefix(token, "-"), `"'`)
+			if val != "" {
+				rule.ExcludedTerms = append(rule.ExcludedTerms, strings.ToLower(val))
+			}
+			continue
+		}
+
+		// 4. Positive filetype: / ext:
+		if strings.HasPrefix(tLower, "filetype:") || strings.HasPrefix(tLower, "ext:") {
+			val := token
+			if strings.HasPrefix(tLower, "filetype:") {
+				val = strings.TrimPrefix(token, "filetype:")
+			} else {
+				val = strings.TrimPrefix(token, "ext:")
+			}
+			val = strings.Trim(val, `"'`)
+			if val != "" {
+				if !strings.HasPrefix(val, ".") {
+					val = "." + val
+				}
+				rule.FileTypes = append(rule.FileTypes, strings.ToLower(val))
+			}
+			continue
+		}
+
+		// 5. Positive inurl:
+		if strings.HasPrefix(tLower, "inurl:") {
+			rawPattern := strings.ToLower(strings.Trim(strings.TrimPrefix(token, "inurl:"), `"'`))
+			if rawPattern != "" {
+				req := InURLRequirement{RawPattern: rawPattern}
+				if strings.Contains(rawPattern, "?") {
+					parts := strings.SplitN(rawPattern, "?", 2)
+					req.PathPart = parts[0]
+					req.ParamPart = parts[1]
+				}
+				rule.InURLReqs = append(rule.InURLReqs, req)
+			}
+			continue
+		}
+
+		// 6. Positive site:
+		if strings.HasPrefix(tLower, "site:") {
+			site := strings.ToLower(strings.Trim(strings.TrimPrefix(token, "site:"), `"'`))
 			if site != "" {
 				rule.SiteSuffixes = append(rule.SiteSuffixes, site)
 			}
+			continue
 		}
 	}
 
 	return rule
 }
 
-// IsValidURL returns true if the URL satisfies all strict dork rules.
+// IsValidURL checks a URL against all positive and negative dork rules
 func IsValidURL(rawURL string, rule *DorkRule) bool {
 	if rawURL == "" {
 		return false
@@ -101,21 +148,19 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 	query := strings.ToLower(parsed.RawQuery)
 	fullURL := strings.ToLower(rawURL)
 
-	// 1. Reject known garbage/portal domains
-	for _, excluded := range excludedDomains {
+	// --- 1. DEFAULT EXCLUSIONS ---
+	for _, excluded := range defaultExcludedDomains {
 		if strings.Contains(host, excluded) {
 			return false
 		}
 	}
 
-	// 2. Reject static asset extensions
-	for _, ext := range excludedExtensions {
+	for _, ext := range defaultExcludedExtensions {
 		if strings.HasSuffix(path, ext) {
 			return false
 		}
 	}
 
-	// 3. Reject search engine loopbacks
 	if strings.Contains(fullURL, "/url?q=") ||
 		strings.Contains(fullURL, "/search?") ||
 		strings.Contains(fullURL, "search.yahoo") ||
@@ -123,7 +168,45 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 		return false
 	}
 
-	// 4. Enforce site: constraint
+	// --- 2. USER NEGATIVE EXCLUSIONS (-) ---
+
+	// Check generic excluded terms (-github, -stackoverflow, -.gov.bd)
+	for _, term := range rule.ExcludedTerms {
+		if strings.Contains(fullURL, term) || strings.Contains(host, term) {
+			return false
+		}
+	}
+
+	// Check excluded sites (-site:XYZ)
+	for _, exSite := range rule.ExcludedSites {
+		if strings.HasPrefix(exSite, ".") {
+			if strings.HasSuffix(host, exSite) {
+				return false
+			}
+		} else {
+			if host == exSite || strings.HasSuffix(host, "."+exSite) {
+				return false
+			}
+		}
+	}
+
+	// Check excluded inurl patterns (-inurl:XYZ)
+	for _, exInurl := range rule.ExcludedInURLs {
+		if strings.Contains(path, exInurl) || strings.Contains(query, exInurl) {
+			return false
+		}
+	}
+
+	// --- 3. POSITIVE CONSTRAINTS ---
+
+	// Enforce filetype: / ext:
+	for _, ext := range rule.FileTypes {
+		if !strings.HasSuffix(path, ext) && !strings.Contains(path, ext) {
+			return false
+		}
+	}
+
+	// Enforce site: constraint
 	for _, suffix := range rule.SiteSuffixes {
 		if strings.HasPrefix(suffix, ".") {
 			if !strings.HasSuffix(host, suffix) {
@@ -136,23 +219,19 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 		}
 	}
 
-	// 5. Enforce inurl: constraint
+	// Enforce inurl: constraint
 	for _, req := range rule.InURLReqs {
 		pathAndQuery := path
 		if query != "" {
 			pathAndQuery += "?" + query
 		}
 
-		// Direct substring check
 		if strings.Contains(pathAndQuery, req.RawPattern) {
 			continue
 		}
 
-		// Multi-part check (e.g. php?id= matched across path + query params)
 		if req.PathPart != "" && req.ParamPart != "" {
-			// Path must contain pathPart (e.g. .php or php)
 			pathMatches := strings.Contains(path, req.PathPart)
-			// Query must contain paramPart (e.g. id= or id)
 			queryMatches := strings.Contains(query, req.ParamPart) || strings.Contains(query, strings.TrimSuffix(req.ParamPart, "=")+"=")
 
 			if pathMatches && queryMatches {
@@ -166,7 +245,7 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 	return true
 }
 
-// ExtractRealURL unwraps search engine redirects (Google, Yahoo, Bing, etc.)
+// ExtractRealURL unwraps search engine redirects
 func ExtractRealURL(raw string) string {
 	if strings.Contains(raw, "/url?q=") {
 		parts := strings.SplitN(raw, "/url?q=", 2)
@@ -191,7 +270,7 @@ func unescapeURL(target string) string {
 	return target
 }
 
-// RootDomain extracts the root domain (host) from a URL for deduplication.
+// RootDomain extracts the root domain from a URL for deduplication
 func RootDomain(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {

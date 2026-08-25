@@ -12,17 +12,18 @@ import (
 	"github.com/frozeniceee/DorkX/internal/runner"
 )
 
-// ANSI color codes for the banner
+// ANSI color codes
 const (
-	ansiCyan   = "\033[36m"
+	ansiWhite  = "\033[97m"
 	ansiBold   = "\033[1m"
 	ansiYellow = "\033[33m"
+	ansiCyan   = "\033[36m"
 	ansiGray   = "\033[90m"
 	ansiReset  = "\033[0m"
 )
 
 func printBanner() {
-	art := ansiCyan + ansiBold + `
+	art := ansiWhite + ansiBold + `
      _            _    __  __
   __| | ___  _ __| | _\ \/ /
  / _' |/ _ \| '__| |/ /\  /
@@ -30,7 +31,7 @@ func printBanner() {
  \__,_|\___/|_|  |_|\_/_/\_\
 ` + ansiReset
 
-	tagline := ansiBold + "         Google Dork CLI Tool" + ansiReset
+	tagline := ansiBold + "              Dork CLI Tool" + ansiReset
 	meta := ansiGray + "         by " + ansiReset +
 		ansiYellow + "Fr0z3n_1c3" + ansiReset +
 		ansiGray + " | " + ansiReset +
@@ -46,10 +47,10 @@ func printBanner() {
 
 func main() {
 	// --- CLI Flags ---
-	dork         := flag.String("d", "", "Single dork query (e.g: \"inurl:php?id=\")")
+	dork         := flag.String("d", "", "Single dork query string (e.g: -d \"inurl:php?id= -github\")")
 	list         := flag.String("l", "", "Path to file containing dorks (one per line)")
 	outputFile   := flag.String("o", "", "Save results to file (e.g: -o results.txt)")
-	limit        := flag.Int("limit", 50, "Target number of strictly-matched unique URLs to collect (default: 50)")
+	limit        := flag.Int("limit", 50, "Target number of unique matched URLs to collect (default: 50)")
 	engineName   := flag.String("e", "hybrid", "Search engine: hybrid (default: Yahoo + Bing), yahoo, bing, google, google-api, or all")
 	delay        := flag.String("delay", "1-2", "Delay range between requests in seconds (default: 1-2)")
 	proxy        := flag.String("proxy", "", "HTTP/SOCKS5 proxy URL (e.g: socks5://127.0.0.1:9050 or http://proxy:8080)")
@@ -71,10 +72,6 @@ func main() {
 		os.Exit(0)
 	}
 
-	if !*silent {
-		printBanner()
-	}
-
 	// --- Collect dorks from all sources ---
 	var dorks []string
 
@@ -94,20 +91,25 @@ func main() {
 	}
 
 	// 3. From STDIN (pipe: cat dorks.txt | dorkx -silent)
-	stat, _ := os.Stdin.Stat()
-	if (stat.Mode() & os.ModeCharDevice) == 0 {
+	stat, err := os.Stdin.Stat()
+	if err == nil && (stat.Mode()&os.ModeNamedPipe != 0) {
 		stdinDorks, err := readLines("-")
 		if err == nil {
 			dorks = append(dorks, stdinDorks...)
 		}
 	}
 
+	// If no dorks provided, print clean banner and usage guide
 	if len(dorks) == 0 {
 		if !*silent {
-			output.Errorf("No dork provided. Use -d \"dork\" or -l dorks.txt or pipe via stdin.\n")
-			fmt.Println("\nRun 'dorkx -h' for help.")
+			printBanner()
+			printUsage()
 		}
-		os.Exit(1)
+		os.Exit(0)
+	}
+
+	if !*silent {
+		printBanner()
 	}
 
 	// Select Search Engine
@@ -190,44 +192,55 @@ DorkX - Dork Recon & Target URL Collector CLI by Fr0z3n_1c3
 USAGE:
   dorkx [flags]
 
-INPUT FLAGS:
-  -d "query"         Single dork query string (e.g: -d "inurl:php?id=")
-  -l file.txt        File containing dorks, one per line
-                     (Also accepts STDIN pipe: cat dorks.txt | dorkx)
+INPUT OPTIONS:
+  -d string          Single dork query string (supports inurl:, site:, filetype:, -exclusions)
+  -l string          Path to file containing dorks, one per line
+  stdin              Pipe dorks via standard input: cat dorks.txt | dorkx
 
-COLLECTION & FILTER FLAGS:
+COLLECTION & FILTERING:
   -limit int         Target number of unique matched URLs to collect (default: 50)
-  -u                 Only output 1 URL per unique root domain
-  -t int             Concurrent dork searches (default: 1)
-  -delay "min-max"   Delay range in seconds between requests (default: "1-2")
-  -timeout int       HTTP timeout per request in seconds (default: 25)
+  -u                 Unique root domain mode: only output 1 URL per root domain
+  -t int             Number of concurrent dork searches (default: 1)
+  -delay string      Delay range between requests in seconds (default: "1-2")
+  -timeout int       HTTP request timeout in seconds (default: 25)
 
-ENGINE FLAGS:
-  -e name            Engine: hybrid (default: Yahoo + Bing), yahoo, bing, google, google-api, or all
-  -api-key key       Google Custom Search API Key (for google-api engine)
-  -cx id             Google Search Engine CX ID (for google-api engine)
+ENGINE SELECTION:
+  -e string          Search engine: hybrid (default: Yahoo + Bing), yahoo, bing, google, google-api, or all
+  -api-key string    Google Custom Search API Key (for google-api engine)
+  -cx string         Google Search Engine CX ID (for google-api engine)
 
-PROXY FLAGS:
-  -proxy   url       Single HTTP/SOCKS5 proxy (e.g: socks5://127.0.0.1:9050 or http://127.0.0.1:8080)
-  -proxy-list file   File of proxies for round-robin rotation
+PROXY CONFIGURATION:
+  -proxy string      Single HTTP/SOCKS5 proxy (e.g: socks5://127.0.0.1:9050 or http://127.0.0.1:8080)
+  -proxy-list string Path to file containing list of proxies (round-robin rotation)
 
-OUTPUT FLAGS:
-  -o  file.txt       Save results to output file
-  -silent            Only print matching URLs (no banner, no logs)
+OUTPUT & DISPLAY:
+  -o string          Save collected URLs to output file
+  -silent            Silent mode: print clean URLs only to stdout (suppresses banner & logs)
   -nc                Disable colored output
-  -version           Print version and exit
+  -version           Display version and exit
+
+DORK SYNTAX SUPPORTED:
+  inurl:pattern      URL path or query must contain pattern (e.g: inurl:php?id=)
+  site:domain        Target specific domain or TLD (e.g: site:.gov.bd, site:.edu)
+  filetype:ext       Target specific file extension (e.g: filetype:php, filetype:sql)
+  -term              Exclude keywords from URLs or domains (e.g: -github -stackoverflow)
+  -site:domain       Exclude specific domains (e.g: -site:facebook.com -site:.gov.bd)
+  -inurl:pattern     Exclude specific path/param patterns (e.g: -inurl:login -inurl:test)
 
 EXAMPLES:
-  # Collect 50 unique targets instantly (Zero CAPTCHA, High Volume):
+  # 1. Collect 50 unique SQLi targets (instant, zero-captcha):
   dorkx -d "inurl:php?id=" -o results.txt
 
-  # Collect 100 targets with specific dork:
-  dorkx -d "inurl:index.php?id=" -limit 100 -o targets.txt
+  # 2. Collect 100 targets while excluding noise domains:
+  dorkx -d "inurl:index.php?id= -github -stackoverflow -.gov.bd" -limit 100 -o targets.txt
 
-  # Target specific TLD with unique root domains:
-  dorkx -d "site:.gov.bd inurl:page.php?id=" -limit 50 -u -o gov_targets.txt
+  # 3. Target government domains with 1 URL per unique domain:
+  dorkx -d "site:.gov.bd inurl:page.php?id=" -limit 30 -u -o gov_targets.txt
 
-  # Pipe directly into httpx & nuclei:
+  # 4. Recon Pipeline (Dork -> HTTP probe -> SQLi vulnerability scan):
   dorkx -d "inurl:view.php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
+
+  # 5. Bulk scan from file with custom concurrency:
+  dorkx -l dorks.txt -limit 50 -t 3 -o all_targets.txt
 `)
 }
