@@ -79,10 +79,10 @@ func (y *YahooEngine) Name() string { return "Yahoo" }
 var yahooRe = regexp.MustCompile(`/RU=([^/]+)/RK=`)
 
 func (y *YahooEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
-	// Yahoo pagination: b=1, 51, 101...
-	start := (page * 50) + 1
+	// Yahoo pagination: b=1, 11, 21, 31... (or 1, 51, 101 with n=50)
+	start := (page * 30) + 1
 	searchURL := fmt.Sprintf(
-		"https://search.yahoo.com/search?p=%s&n=50&b=%d",
+		"https://search.yahoo.com/search?p=%s&n=30&b=%d",
 		url.QueryEscape(dork),
 		start,
 	)

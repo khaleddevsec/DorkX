@@ -225,10 +225,10 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 			output.Grayf("  ↳ Page %d: +%d new URLs\n", page+1, pageNew)
 		}
 
-		// If a page returned zero raw results, we've likely hit the end
+		// Only stop if the engine literally returned 0 results from network
 		if len(results) == 0 {
 			if !r.cfg.Silent {
-				output.Grayf("  ↳ No more results from engine. Stopping pagination.\n")
+				output.Grayf("  ↳ No more raw results from engine. Stopping pagination.\n")
 			}
 			break
 		}
