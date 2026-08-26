@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Language-Go%201.21+-00ADD8?style=flat&logo=go" alt="Go"></a>
-  <a href="https://github.com/frozeniceee/DorkX/releases"><img src="https://img.shields.io/badge/Version-v3.0.0-brightgreen?style=flat" alt="Version"></a>
+  <a href="https://github.com/frozeniceee/DorkX/releases"><img src="https://img.shields.io/badge/Version-v3.1.0-brightgreen?style=flat" alt="Version"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
   <a href="https://github.com/frozeniceee/DorkX"><img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat" alt="Platform"></a>
 </p>
