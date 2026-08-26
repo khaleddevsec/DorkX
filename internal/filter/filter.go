@@ -5,52 +5,49 @@ import (
 	"strings"
 )
 
-// defaultExcludedDomains are generic portals we always discard unless explicitly asked
+// defaultExcludedDomains are generic portals we always discard unless explicitly asked by the user
 var defaultExcludedDomains = []string{
 	"google.com", "google.co", "googleapis.com", "gstatic.com",
 	"googleusercontent.com", "youtube.com", "youtu.be",
 	"facebook.com", "twitter.com", "x.com", "instagram.com", "linkedin.com",
 	"pinterest.com", "reddit.com", "wikipedia.org", "wikimedia.org",
 	"amazon.com", "ebay.com", "bing.com", "yahoo.com", "yimg.com",
-	"w3.org", "schema.org", "archive.org",
+	"duckduckgo.com", "aol.com", "w3.org", "schema.org", "archive.org",
 	"maps.google", "accounts.google", "policies.google",
 	"support.google", "translate.google", "books.google",
 }
 
-// defaultExcludedExtensions are static asset/binary file types
+// defaultExcludedExtensions are static browser assets & media only (NEVER data/docs/logs)
 var defaultExcludedExtensions = []string{
 	".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".ico",
 	".mp4", ".mp3", ".avi", ".mkv", ".mov", ".webm",
-	".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-	".zip", ".rar", ".tar", ".gz", ".7z",
-	".exe", ".dmg", ".pkg", ".deb", ".rpm",
 	".css", ".woff", ".woff2", ".ttf", ".eot",
 }
 
 // InURLRequirement stores path and parameter constraints
 type InURLRequirement struct {
 	RawPattern string
-	PathPart   string // e.g. "php" or "page.php"
+	PathPart   string // e.g. "php" or "page.php" or "/admin/"
 	ParamPart  string // e.g. "id=" or "id"
 }
 
 // DorkRule holds the complete set of strict positive and negative constraints
 type DorkRule struct {
-	InURLReqs       []InURLRequirement
-	SiteSuffixes    []string
-	FileTypes       []string
-	ExcludedTerms   []string // e.g. -github, -stackoverflow, -.gov.bd
-	ExcludedSites   []string // e.g. -site:github.com, -site:.gov.bd
-	ExcludedInURLs  []string // e.g. -inurl:test, -inurl:demo
-	RawDork         string
+	InURLReqs      []InURLRequirement
+	SiteSuffixes   []string
+	FileTypes      []string
+	ExcludedTerms  []string // e.g. -github, -stackoverflow, -.gov.bd
+	ExcludedSites  []string // e.g. -site:github.com, -site:.gov.bd
+	ExcludedInURLs []string // e.g. -inurl:test, -inurl:demo
+	RawDork        string
 }
 
-// ExtractRulesFromDork parses complex dork queries with positive and negative operators.
-// Example: "inurl:php?id= -github -stackoverflow -.gov.bd filetype:php -site:demo.com"
+// ExtractRulesFromDork parses any complex search engine dork query with all operators.
+// Supports: inurl:, site:, filetype:, ext:, intitle:, intext:, quotes ("..."), and negative exclusions (-term, -site:, -inurl:)
 func ExtractRulesFromDork(dork string) *DorkRule {
 	rule := &DorkRule{RawDork: dork}
 
-	tokens := strings.Fields(dork)
+	tokens := parseTokens(dork)
 	for _, token := range tokens {
 		tLower := strings.ToLower(token)
 
@@ -127,6 +124,34 @@ func ExtractRulesFromDork(dork string) *DorkRule {
 	return rule
 }
 
+// parseTokens splits dork queries preserving quoted strings ("index of", "admin login")
+func parseTokens(query string) []string {
+	var tokens []string
+	var current strings.Builder
+	inQuotes := false
+
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		if ch == '"' || ch == '\'' {
+			inQuotes = !inQuotes
+			current.WriteByte(ch)
+		} else if (ch == ' ' || ch == '\t') && !inQuotes {
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+		} else {
+			current.WriteByte(ch)
+		}
+	}
+
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+
+	return tokens
+}
+
 // IsValidURL checks a URL against all positive and negative dork rules
 func IsValidURL(rawURL string, rule *DorkRule) bool {
 	if rawURL == "" {
@@ -148,23 +173,45 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 	query := strings.ToLower(parsed.RawQuery)
 	fullURL := strings.ToLower(rawURL)
 
-	// --- 1. DEFAULT EXCLUSIONS ---
+	// --- 1. DEFAULT PORTAL & ENGINE EXCLUSIONS ---
+	// (Only exclude default portals if the user didn't explicitly target them with site:)
 	for _, excluded := range defaultExcludedDomains {
 		if strings.Contains(host, excluded) {
-			return false
+			explicitlyTargeted := false
+			for _, site := range rule.SiteSuffixes {
+				if strings.Contains(site, excluded) {
+					explicitlyTargeted = true
+					break
+				}
+			}
+			if !explicitlyTargeted {
+				return false
+			}
 		}
 	}
 
+	// Default media/stylesheet exclusions (unless explicitly requested in filetype:)
 	for _, ext := range defaultExcludedExtensions {
 		if strings.HasSuffix(path, ext) {
-			return false
+			explicitlyRequested := false
+			for _, ft := range rule.FileTypes {
+				if ft == ext {
+					explicitlyRequested = true
+					break
+				}
+			}
+			if !explicitlyRequested {
+				return false
+			}
 		}
 	}
 
+	// Reject search engine internal loopbacks
 	if strings.Contains(fullURL, "/url?q=") ||
 		strings.Contains(fullURL, "/search?") ||
 		strings.Contains(fullURL, "search.yahoo") ||
-		strings.Contains(fullURL, "bing.com") {
+		strings.Contains(fullURL, "bing.com/ck/") ||
+		strings.Contains(fullURL, "duckduckgo.com/l/") {
 		return false
 	}
 
@@ -200,8 +247,16 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 	// --- 3. POSITIVE CONSTRAINTS ---
 
 	// Enforce filetype: / ext:
-	for _, ext := range rule.FileTypes {
-		if !strings.HasSuffix(path, ext) && !strings.Contains(path, ext) {
+	if len(rule.FileTypes) > 0 {
+		matchedFileType := false
+		for _, ext := range rule.FileTypes {
+			// Matches .ext at end of path (e.g. /data.sql) or with query (e.g. /index.php?id=)
+			if strings.HasSuffix(path, ext) || strings.Contains(path, ext+"?") || strings.Contains(path, ext+"/") || strings.Contains(path, ext) {
+				matchedFileType = true
+				break
+			}
+		}
+		if !matchedFileType {
 			return false
 		}
 	}
@@ -249,6 +304,13 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 func ExtractRealURL(raw string) string {
 	if strings.Contains(raw, "/url?q=") {
 		parts := strings.SplitN(raw, "/url?q=", 2)
+		if len(parts) == 2 {
+			target := strings.SplitN(parts[1], "&", 2)[0]
+			return unescapeURL(target)
+		}
+	}
+	if strings.Contains(raw, "uddg=") {
+		parts := strings.SplitN(raw, "uddg=", 2)
 		if len(parts) == 2 {
 			target := strings.SplitN(parts[1], "&", 2)[0]
 			return unescapeURL(target)

@@ -29,11 +29,11 @@ type Engine interface {
 
 // ---- User-Agent Pool --------------------------------------------------------
 var userAgents = []string{
-	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 	"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (X11; Fedora; Linux x86_64; rv:124.0) Gecko/20100101 Firefox/124.0",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
 }
 
 func randomUA() string {
@@ -45,7 +45,7 @@ func randomUA() string {
 func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 	transport := &http.Transport{
 		DisableKeepAlives: false,
-		MaxIdleConns:      20,
+		MaxIdleConns:      30,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
 	}
 
@@ -81,10 +81,9 @@ var yahooRUMatch = regexp.MustCompile(`/RU=([^/]+)/RK=`)
 var yahooDirectHref = regexp.MustCompile(`href=["'](https?://[^"'\s>]+)["']`)
 
 func (y *YahooEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
-	// Yahoo pagination step (1, 11, 21, 31, 41...)
-	start := (page * 10) + 1
+	start := (page * 20) + 1
 	searchURL := fmt.Sprintf(
-		"https://search.yahoo.com/search?p=%s&n=30&b=%d",
+		"https://search.yahoo.com/search?p=%s&n=50&b=%d",
 		url.QueryEscape(dork),
 		start,
 	)
@@ -178,10 +177,9 @@ func decodeBingRedirect(raw string) string {
 }
 
 func (b *BingEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
-	// Bing pagination: first=1, 11, 21, 31...
-	start := (page * 10) + 1
+	start := (page * 20) + 1
 	searchURL := fmt.Sprintf(
-		"https://www.bing.com/search?q=%s&first=%d&count=30",
+		"https://www.bing.com/search?q=%s&first=%d&count=50",
 		url.QueryEscape(dork),
 		start,
 	)
@@ -232,6 +230,155 @@ func (b *BingEngine) Search(dork string, page int, proxyURL *url.URL, timeout in
 		if !seen[u] && !strings.Contains(u, "bing.com") && !strings.Contains(u, "microsoft.com") {
 			seen[u] = true
 			results = append(results, Result{RawURL: u, Source: b.Name()})
+		}
+	}
+
+	return results, nil
+}
+
+// ---- DuckDuckGo HTML Engine -------------------------------------------------
+
+type DuckDuckGoEngine struct{}
+
+func NewDuckDuckGoEngine() *DuckDuckGoEngine {
+	return &DuckDuckGoEngine{}
+}
+
+func (d *DuckDuckGoEngine) Name() string { return "DuckDuckGo" }
+
+var ddgUddgMatch = regexp.MustCompile(`uddg=([^&"'>]+)`)
+var ddgResultHref = regexp.MustCompile(`<a\s+[^>]*class=["'][^"']*result__(?:url|snippet|title)[^"']*["'][^>]*href=["']([^"']+)["']`)
+
+func (d *DuckDuckGoEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
+	// DuckDuckGo HTML search endpoint
+	searchURL := "https://html.duckduckgo.com/html/"
+
+	client := buildClient(proxyURL, timeout)
+	
+	formData := url.Values{}
+	formData.Set("q", dork)
+	if page > 0 {
+		formData.Set("s", fmt.Sprintf("%d", page*30))
+	}
+
+	req, err := http.NewRequest("POST", searchURL, strings.NewReader(formData.Encode()))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", randomUA())
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 || resp.StatusCode == 503 {
+		return nil, fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+
+	bodyStr := string(body)
+	var results []Result
+	seen := make(map[string]bool)
+
+	// 1. Extract uddg= tracking links
+	matches := ddgUddgMatch.FindAllStringSubmatch(bodyStr, -1)
+	for _, m := range matches {
+		decoded, err := url.QueryUnescape(m[1])
+		if err == nil && strings.HasPrefix(decoded, "http") && !seen[decoded] {
+			if !strings.Contains(decoded, "duckduckgo.com") {
+				seen[decoded] = true
+				results = append(results, Result{RawURL: decoded, Source: d.Name()})
+			}
+		}
+	}
+
+	// 2. Extract direct class hrefs
+	hrefMatches := ddgResultHref.FindAllStringSubmatch(bodyStr, -1)
+	for _, m := range hrefMatches {
+		u := m[1]
+		if strings.Contains(u, "uddg=") {
+			parts := strings.Split(u, "uddg=")
+			if len(parts) > 1 {
+				cleanTarget, err := url.QueryUnescape(strings.Split(parts[1], "&")[0])
+				if err == nil && strings.HasPrefix(cleanTarget, "http") && !seen[cleanTarget] {
+					seen[cleanTarget] = true
+					results = append(results, Result{RawURL: cleanTarget, Source: d.Name()})
+				}
+			}
+		} else if strings.HasPrefix(u, "http") && !strings.Contains(u, "duckduckgo.com") && !seen[u] {
+			seen[u] = true
+			results = append(results, Result{RawURL: u, Source: d.Name()})
+		}
+	}
+
+	return results, nil
+}
+
+// ---- AOL Engine -------------------------------------------------------------
+
+type AOLEngine struct{}
+
+func NewAOLEngine() *AOLEngine {
+	return &AOLEngine{}
+}
+
+func (a *AOLEngine) Name() string { return "AOL" }
+
+func (a *AOLEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
+	start := (page * 20) + 1
+	searchURL := fmt.Sprintf(
+		"https://search.aol.com/aol/search?q=%s&b=%d&pz=50",
+		url.QueryEscape(dork),
+		start,
+	)
+
+	client := buildClient(proxyURL, timeout)
+	req, err := http.NewRequest("GET", searchURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", randomUA())
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 || resp.StatusCode == 503 {
+		return nil, fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+
+	bodyStr := string(body)
+	var results []Result
+	seen := make(map[string]bool)
+
+	matches := yahooRUMatch.FindAllStringSubmatch(bodyStr, -1)
+	for _, m := range matches {
+		decoded, err := url.QueryUnescape(m[1])
+		if err == nil && strings.HasPrefix(decoded, "http") && !seen[decoded] {
+			if !strings.Contains(decoded, "aol.com") {
+				seen[decoded] = true
+				results = append(results, Result{RawURL: decoded, Source: a.Name()})
+			}
 		}
 	}
 
@@ -395,7 +542,12 @@ type HybridEngine struct {
 
 func NewHybridEngine(engines ...Engine) *HybridEngine {
 	if len(engines) == 0 {
-		engines = []Engine{NewYahooEngine(), NewBingEngine()}
+		engines = []Engine{
+			NewYahooEngine(),
+			NewBingEngine(),
+			NewDuckDuckGoEngine(),
+			NewAOLEngine(),
+		}
 	}
 	return &HybridEngine{engines: engines}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/frozeniceee/DorkX/internal/engine"
 	"github.com/frozeniceee/DorkX/internal/output"
 	"github.com/frozeniceee/DorkX/internal/runner"
+	"github.com/frozeniceee/DorkX/internal/updater"
 )
 
 // ANSI color codes
@@ -21,6 +22,8 @@ const (
 	ansiGray   = "\033[90m"
 	ansiReset  = "\033[0m"
 )
+
+const AppVersion = "v3.0.0"
 
 func printBanner() {
 	art := ansiWhite + ansiBold + `
@@ -35,7 +38,7 @@ func printBanner() {
 	meta := ansiGray + "         by " + ansiReset +
 		ansiYellow + "Fr0z3n_1c3" + ansiReset +
 		ansiGray + " | " + ansiReset +
-		ansiCyan + "v2.5.0" + ansiReset +
+		ansiCyan + AppVersion + ansiReset +
 		ansiGray + " | " + ansiReset +
 		"https://github.com/frozeniceee/DorkX"
 
@@ -51,7 +54,7 @@ func main() {
 	list         := flag.String("l", "", "Path to file containing dorks (one per line)")
 	outputFile   := flag.String("o", "", "Save results to file (e.g: -o results.txt)")
 	limit        := flag.Int("limit", 50, "Target number of unique matched URLs to collect (default: 50)")
-	engineName   := flag.String("e", "hybrid", "Search engine: hybrid (default: Yahoo + Bing), yahoo, bing, google, google-api, or all")
+	engineName   := flag.String("e", "hybrid", "Search engine: hybrid (default: Yahoo + Bing + DuckDuckGo + AOL), yahoo, bing, duckduckgo, google, google-api, or all")
 	delay        := flag.String("delay", "1-2", "Delay range between requests in seconds (default: 1-2)")
 	proxy        := flag.String("proxy", "", "HTTP/SOCKS5 proxy URL (e.g: socks5://127.0.0.1:9050 or http://proxy:8080)")
 	proxyList    := flag.String("proxy-list", "", "Path to file with proxy list (round-robin rotation)")
@@ -65,13 +68,23 @@ func main() {
 	apiKey       := flag.String("api-key", os.Getenv("GOOGLE_API_KEY"), "Google Custom Search JSON API Key (for google-api engine)")
 	cx           := flag.String("cx", os.Getenv("GOOGLE_CX"), "Google Custom Search Engine ID / CX (for google-api engine)")
 	noColor      := flag.Bool("nc", false, "Disable colored output")
+	doUpdate     := flag.Bool("update", false, "Update DorkX to the latest version directly from GitHub")
+	upShort      := flag.Bool("up", false, "Alias for -update")
 	version      := flag.Bool("version", false, "Print version and exit")
 
 	flag.Usage = printUsage
 	flag.Parse()
 
 	if *version {
-		fmt.Println("dorkx v2.5.0")
+		fmt.Println("dorkx " + AppVersion)
+		os.Exit(0)
+	}
+
+	if *doUpdate || *upShort {
+		if !*silent {
+			printBanner()
+		}
+		updater.Update()
 		os.Exit(0)
 	}
 
@@ -122,6 +135,10 @@ func main() {
 		searchEngine = engine.NewYahooEngine()
 	case "bing":
 		searchEngine = engine.NewBingEngine()
+	case "duckduckgo", "ddg":
+		searchEngine = engine.NewDuckDuckGoEngine()
+	case "aol":
+		searchEngine = engine.NewAOLEngine()
 	case "google":
 		searchEngine = engine.NewGoogleEngine()
 	case "google-api", "cse":
@@ -132,14 +149,31 @@ func main() {
 		searchEngine = engine.NewGoogleCSEEngine(*apiKey, *cx)
 	case "all":
 		if *apiKey != "" && *cx != "" {
-			searchEngine = engine.NewHybridEngine(engine.NewYahooEngine(), engine.NewBingEngine(), engine.NewGoogleCSEEngine(*apiKey, *cx))
+			searchEngine = engine.NewHybridEngine(
+				engine.NewYahooEngine(),
+				engine.NewBingEngine(),
+				engine.NewDuckDuckGoEngine(),
+				engine.NewAOLEngine(),
+				engine.NewGoogleCSEEngine(*apiKey, *cx),
+			)
 		} else {
-			searchEngine = engine.NewHybridEngine(engine.NewYahooEngine(), engine.NewBingEngine(), engine.NewGoogleEngine())
+			searchEngine = engine.NewHybridEngine(
+				engine.NewYahooEngine(),
+				engine.NewBingEngine(),
+				engine.NewDuckDuckGoEngine(),
+				engine.NewAOLEngine(),
+				engine.NewGoogleEngine(),
+			)
 		}
 	case "hybrid":
 		fallthrough
 	default:
-		searchEngine = engine.NewHybridEngine(engine.NewYahooEngine(), engine.NewBingEngine())
+		searchEngine = engine.NewHybridEngine(
+			engine.NewYahooEngine(),
+			engine.NewBingEngine(),
+			engine.NewDuckDuckGoEngine(),
+			engine.NewAOLEngine(),
+		)
 	}
 
 	// --- Build Config ---
@@ -212,7 +246,7 @@ COLLECTION & FILTERING:
   -timeout int       HTTP request timeout in seconds (default: 25)
 
 ENGINE SELECTION:
-  -e string          Search engine: hybrid (default: Yahoo + Bing), yahoo, bing, google, google-api, or all
+  -e string          Search engine: hybrid (default: Yahoo+Bing+DuckDuckGo+AOL), yahoo, bing, ddg, google, google-api, or all
   -api-key string    Google Custom Search API Key (for google-api engine)
   -cx string         Google Search Engine CX ID (for google-api engine)
 
@@ -220,37 +254,42 @@ PROXY CONFIGURATION:
   -proxy string      Single HTTP/SOCKS5 proxy (e.g: socks5://127.0.0.1:9050 or http://127.0.0.1:8080)
   -proxy-list string Path to file containing list of proxies (round-robin rotation)
 
+UPDATE & MAINTENANCE:
+  -update, -up       Update DorkX directly to the latest version from GitHub
+  -version           Display version and exit
+
 OUTPUT & DISPLAY:
   -o string          Save collected URLs to output file
   -silent            Silent mode: print clean URLs only to stdout (suppresses banner & logs)
   -nc                Disable colored output
-  -version           Display version and exit
 
 DORK SYNTAX SUPPORTED:
-  inurl:pattern      URL path or query must contain pattern (e.g: inurl:php?id=)
+  inurl:pattern      URL path or query must contain pattern (e.g: inurl:php?id=, inurl:/admin/)
   site:domain        Target specific domain or TLD (e.g: site:.gov.bd, site:.edu)
-  filetype:ext       Target specific file extension (e.g: filetype:php, filetype:sql)
+  filetype:ext       Target specific file extension (e.g: filetype:pdf, ext:sql, ext:env)
+  intitle:"text"     Search engine title targeting
+  "exact phrase"     Quotes for exact phrase matching
   -term              Exclude keywords from URLs or domains (e.g: -github -stackoverflow)
   -site:domain       Exclude specific domains (e.g: -site:facebook.com -site:.gov.bd)
   -inurl:pattern     Exclude specific path/param patterns (e.g: -inurl:login -inurl:test)
 
 EXAMPLES:
-  # 1. Collect 50 unique SQLi targets (instant, zero-captcha):
-  dorkx -d "inurl:php?id=" -o results.txt
+  # 1. Basic Single Dork (Collects 50 unique targets):
+  dorkx -d "Dork" -o results.txt
 
   # 2. Collect only live URLs responding with HTTP 200 OK:
-  dorkx -d "inurl:index.php?id=" -status-code -mc 200 -limit 50
+  dorkx -d "Dork" -status-code -mc 200 -limit 50 -o live_targets.txt
 
   # 3. Collect 100 targets while excluding noise domains:
-  dorkx -d "inurl:index.php?id= -github -stackoverflow -.gov.bd" -limit 100 -o targets.txt
+  dorkx -d "Dork -github -stackoverflow -.gov.bd" -limit 100 -o targets.txt
 
   # 4. Target government domains with 1 URL per unique domain:
-  dorkx -d "site:.gov.bd inurl:page.php?id=" -limit 30 -u -o gov_targets.txt
+  dorkx -d "site:.gov.bd Dork" -limit 30 -u -o gov_targets.txt
 
   # 5. Recon Pipeline (Dork -> HTTP probe -> SQLi vulnerability scan):
-  dorkx -d "inurl:view.php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
+  dorkx -d "Dork" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
 
-  # 6. Bulk scan from file with custom concurrency:
-  dorkx -l dorks.txt -limit 50 -t 3 -o all_targets.txt
+  # 6. Update DorkX to the latest version:
+  dorkx -update
 `)
 }

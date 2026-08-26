@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Language-Go%201.21+-00ADD8?style=flat&logo=go" alt="Go"></a>
-  <a href="https://github.com/frozeniceee/DorkX/releases"><img src="https://img.shields.io/badge/Version-v2.5.0-brightgreen?style=flat" alt="Version"></a>
+  <a href="https://github.com/frozeniceee/DorkX/releases"><img src="https://img.shields.io/badge/Version-v3.0.0-brightgreen?style=flat" alt="Version"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
   <a href="https://github.com/frozeniceee/DorkX"><img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat" alt="Platform"></a>
 </p>
@@ -30,10 +30,10 @@ DorkX is a high-performance reconnaissance CLI tool designed to find and collect
 ### Key Features
 
 - **Limit-Based Target Collection (`-limit 50`)**: Specify the exact number of unique target URLs required (e.g. 50, 100, 500), and DorkX collects continuously until the limit is reached.
-- **Hybrid Multi-Engine Engine (`-e hybrid`)**: Queries Yahoo and Bing concurrently out of the box with zero captchas, zero proxies, and no Tor setup required.
+- **Quad Hybrid Multi-Engine Engine (`-e hybrid`)**: Queries Yahoo, Bing, DuckDuckGo, and AOL concurrently out of the box with zero captchas, zero proxies, and no Tor setup required.
+- **Universal Dork Support**: Works seamlessly across all dork patterns: `inurl:`, `site:`, `filetype:`, `ext:`, `intitle:`, `"exact quotes"`, keyword combos, and negative exclusions (`-github`, `-site:`, `-inurl:`).
 - **Live HTTP Status Probe (`-status-code`, `-mc 200`)**: Verify if targets are live and filter out dead pages directly within DorkX.
-- **Smart Strict Matching**: Ensures candidate URLs contain required file extensions and query parameters (e.g. `page.php?cat=1&id=10` or `view.php?id=2`), discarding search engine noise, ads, and irrelevant pages.
-- **Full Exclusion & Negative Operators**: Supports `-term`, `-site:domain`, `-inurl:pattern`, and `filetype:` directly in queries (e.g. `inurl:php?id= -github -stackoverflow -.gov.bd`).
+- **Self-Updating (`-update`)**: Update DorkX directly to the latest release with a single flag.
 - **Pipeline-First Design**: URLs are printed to `stdout` and logs to `stderr`, providing 100% compatibility with standard UNIX pipe workflows.
 - **Zero Dependencies**: Standalone compiled binary with no runtime dependencies.
 
@@ -55,6 +55,16 @@ sudo cp -f dorkx /usr/local/go/bin/ 2>/dev/null || true
 
 ```bash
 go install github.com/frozeniceee/DorkX@latest
+```
+
+---
+
+## Self-Updating
+
+Update DorkX directly from GitHub to the latest version anytime:
+
+```bash
+dorkx -update
 ```
 
 ---
@@ -97,7 +107,7 @@ dorkx -d "Dork" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
 
 ### 7. Bulk Dorking from File
 ```bash
-dorkx -l dorks.txt -limit 50 -t 2 -o all_results.txt
+dorkx -l targets_dorks.txt -limit 50 -t 2 -o all_results.txt
 ```
 
 ---
@@ -119,9 +129,12 @@ dorkx -l dorks.txt -limit 50 -t 2 -o all_results.txt
 | `-delay` | `string` | `"1-2"` | Delay range in seconds between batch requests |
 | `-timeout` | `int` | `25` | HTTP request timeout in seconds |
 | **Engine Selection** | | | |
-| `-e` | `string` | `hybrid` | Search engine: `hybrid` (Yahoo+Bing), `yahoo`, `bing`, `google`, `google-api`, or `all` |
+| `-e` | `string` | `hybrid` | Search engine: `hybrid` (Yahoo+Bing+DuckDuckGo+AOL), `yahoo`, `bing`, `ddg`, `google`, `google-api`, or `all` |
 | `-api-key` | `string` | `""` | Google Custom Search API Key (for `google-api` engine) |
 | `-cx` | `string` | `""` | Google Search Engine CX ID (for `google-api` engine) |
+| **Maintenance** | | | |
+| `-update`, `-up` | `bool` | `false` | Update DorkX directly to the latest version from GitHub |
+| `-version` | `bool` | `false` | Print version and exit |
 | **Proxy Options** | | | |
 | `-proxy` | `string` | `""` | Single HTTP/SOCKS5 proxy (`socks5://127.0.0.1:9050` or `http://127.0.0.1:8080`) |
 | `-proxy-list` | `string` | `""` | Path to file containing list of proxies for rotation |
@@ -129,19 +142,20 @@ dorkx -l dorks.txt -limit 50 -t 2 -o all_results.txt
 | `-o` | `string` | `""` | File path to save collected URLs |
 | `-silent` | `bool` | `false` | Silent mode: outputs clean URLs only to stdout |
 | `-nc` | `bool` | `false` | Disable colored terminal output |
-| `-version` | `bool` | `false` | Print version and exit |
 
 ---
 
 ## Supported Dork Operators
 
-DorkX supports full search engine operator syntax and enforces them strictly on every returned candidate URL:
+DorkX supports all native search engine operator syntax:
 
 | Operator | Syntax Example | Meaning |
 | :--- | :--- | :--- |
-| **inurl:** | `inurl:php?id=` | URL path or query parameters must contain this pattern |
+| **inurl:** | `inurl:php?id=`, `inurl:/admin/` | URL path or query parameters must contain this pattern |
 | **site:** | `site:.gov.bd` or `site:example.com` | Target URL domain must match or end with this domain/TLD |
-| **filetype: / ext:** | `filetype:php` or `ext:sql` | Target URL must end with this file extension |
+| **filetype: / ext:** | `filetype:pdf`, `ext:sql`, `ext:env` | Target URL must end with this file extension |
+| **intitle:** | `intitle:"index of"` | Search engine title matching |
+| **Quotes ("...")** | `"admin login"` | Exact phrase matching |
 | **Negative Term (-)** | `-github -stackoverflow` | Exclude any URL containing these keywords |
 | **Negative Site (-site:)** | `-site:facebook.com -site:.gov` | Exclude specific domains or TLDs |
 | **Negative inurl (-inurl:)** | `-inurl:login -inurl:test` | Exclude specific path/parameter patterns |
@@ -157,17 +171,17 @@ dorkx -d "inurl:item.php?id= -site:amazon.com -site:ebay.com -stackoverflow file
 
 ### 1. Dorking to Live Host Probing with `httpx`
 ```bash
-dorkx -d "inurl:page.php?id=" -limit 50 -silent | httpx -silent -status-code -title
+dorkx -d "Dork" -limit 50 -silent | httpx -silent -status-code -title
 ```
 
 ### 2. Dorking to Vulnerability Scanning with `nuclei`
 ```bash
-dorkx -d "inurl:index.php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -tags sqli -o sqli_vulnerable.txt
+dorkx -d "Dork" -limit 50 -silent | httpx -silent -mc 200 | nuclei -tags sqli -o sqli_vulnerable.txt
 ```
 
 ### 3. Save Targets and Pipe Simultaneously with `tee`
 ```bash
-dorkx -d "inurl:view.php?id=" -limit 100 -silent | tee targets.txt | httpx -silent
+dorkx -d "Dork" -limit 100 -silent | tee targets.txt | httpx -silent
 ```
 
 ---
@@ -182,9 +196,10 @@ inurl:index.php?id= -github
 inurl:page.php?id= -stackoverflow
 inurl:product.php?id=
 
-# LFI / Path Traversal Dorks
-inurl:include.php?file=
-inurl:load.php?page=
+# Sensitive Files
+filetype:env intext:DB_PASSWORD
+filetype:sql "dump"
+filetype:pdf "confidential"
 
 # Specific TLD Targeting
 site:.gov.bd inurl:page.php?id=
@@ -193,7 +208,7 @@ site:.edu inurl:index.php?id=
 
 Run in bulk:
 ```bash
-dorkx -l targets_dorks.txt -limit 30 -o bulk_targets.txt
+dorkx -l targets_dorks.txt -limit 50 -o bulk_targets.txt
 ```
 
 ---

@@ -68,7 +68,6 @@ func New(cfg *Config) *Runner {
 		matchCodes:  make(map[int]bool),
 	}
 
-	// Parse match codes if provided
 	if cfg.MatchCode != "" {
 		for _, part := range strings.Split(cfg.MatchCode, ",") {
 			part = strings.TrimSpace(part)
@@ -80,11 +79,10 @@ func New(cfg *Config) *Runner {
 
 	r.delayMin, r.delayMax = parseDelay(cfg.DelayRange)
 
-	// Built-in lightweight probe client
 	r.probeClient = &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout: 6 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
 			DisableKeepAlives: true,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -105,19 +103,19 @@ func (r *Runner) probeURL(target string, proxyURL *url.URL) int {
 		return 0
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
 	req.Header.Set("Accept", "*/*")
 
 	client := r.probeClient
 	if proxyURL != nil {
 		tr := &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			Proxy:             http.ProxyURL(proxyURL),
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
 			DisableKeepAlives: true,
 		}
 		client = &http.Client{
 			Transport: tr,
-			Timeout: 6 * time.Second,
+			Timeout:   7 * time.Second,
 		}
 	}
 
@@ -209,7 +207,7 @@ func (r *Runner) Run() {
 	}
 }
 
-// searchDork continuously queries until Target Limit is reached or index is exhausted
+// searchDork continuously queries until Target Limit is reached or engine index is exhausted
 func (r *Runner) searchDork(idx, total int, dork string) {
 	rule := filter.ExtractRulesFromDork(dork)
 
@@ -220,10 +218,13 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 			for _, req := range rule.InURLReqs {
 				patterns = append(patterns, req.RawPattern)
 			}
-			output.Grayf("  ↳ Strict patterns: %v\n", patterns)
+			output.Grayf("  ↳ Strict inurl: %v\n", patterns)
 		}
 		if len(rule.SiteSuffixes) > 0 {
 			output.Grayf("  ↳ Site filter: %v\n", rule.SiteSuffixes)
+		}
+		if len(rule.FileTypes) > 0 {
+			output.Grayf("  ↳ File types: %v\n", rule.FileTypes)
 		}
 		if len(rule.ExcludedTerms) > 0 || len(rule.ExcludedSites) > 0 || len(rule.ExcludedInURLs) > 0 {
 			output.Grayf("  ↳ Exclusions: %v %v %v\n", rule.ExcludedTerms, rule.ExcludedSites, rule.ExcludedInURLs)
@@ -233,8 +234,8 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 	foundForDork := 0
 	page := 0
 	consecutiveEmpty := 0
-	maxConsecutiveEmpty := 4
-	maxPagesSafetyLimit := 40
+	maxConsecutiveEmpty := 6
+	maxPagesSafetyLimit := 60
 
 	for foundForDork < r.cfg.Limit && page < maxPagesSafetyLimit && consecutiveEmpty < maxConsecutiveEmpty {
 		if page > 0 {
@@ -243,18 +244,12 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 
 		proxyURL := r.nextProxy()
 
-		if !r.cfg.Silent {
-			output.Grayf("  ↳ Fetching batch %d (Collected: %d/%d) ...\n", page+1, foundForDork, r.cfg.Limit)
-		}
-
 		results, err := r.cfg.Engine.Search(dork, page, proxyURL, r.cfg.Timeout)
 		if err != nil {
 			if strings.Contains(err.Error(), "CAPTCHA") {
 				output.Warnf("CAPTCHA detected on dork [%s]. Try adding -proxy or using hybrid engine.\n", dork)
 				break
 			}
-			output.Warnf("Batch %d error for dork [%s]: %v\n", page+1, dork, err)
-			time.Sleep(1 * time.Second)
 			page++
 			consecutiveEmpty++
 			continue
@@ -305,7 +300,7 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 			r.totalFound++
 			r.mu.Unlock()
 
-			// Print to stdout
+			// Print to stdout (clean for piping)
 			if r.cfg.StatusCode && statusCode > 0 {
 				output.ResultWithStatus(cleaned, statusCode)
 			} else {
