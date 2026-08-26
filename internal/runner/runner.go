@@ -207,7 +207,7 @@ func (r *Runner) Run() {
 	}
 }
 
-// searchDork continuously queries using ClusterBomb permutations until Target Limit is reached
+// searchDork continuously queries until Target Limit is reached or index is exhausted
 func (r *Runner) searchDork(idx, total int, dork string) {
 	rule := filter.ExtractRulesFromDork(dork)
 	clusterDorks := filter.GenerateClusterDorks(dork)
@@ -241,8 +241,8 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 
 		page := 0
 		consecutiveEmpty := 0
-		maxConsecutiveEmpty := 2
-		maxPagesSafetyLimit := 20
+		maxConsecutiveEmpty := 5
+		maxPagesSafetyLimit := 40
 
 		for foundForDork < r.cfg.Limit && page < maxPagesSafetyLimit && consecutiveEmpty < maxConsecutiveEmpty {
 			if page > 0 {

@@ -12,12 +12,12 @@ var defaultExcludedDomains = []string{
 	"facebook.com", "twitter.com", "x.com", "instagram.com", "linkedin.com",
 	"pinterest.com", "reddit.com", "wikipedia.org", "wikimedia.org",
 	"amazon.com", "ebay.com", "bing.com", "yahoo.com", "yimg.com",
-	"duckduckgo.com", "aol.com", "w3.org", "schema.org", "archive.org",
+	"w3.org", "schema.org", "archive.org",
 	"maps.google", "accounts.google", "policies.google",
 	"support.google", "translate.google", "books.google",
 }
 
-// defaultExcludedExtensions are static browser assets & media only (NEVER data/docs/logs)
+// defaultExcludedExtensions are static asset/binary file types
 var defaultExcludedExtensions = []string{
 	".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp", ".ico",
 	".mp4", ".mp3", ".avi", ".mkv", ".mov", ".webm",
@@ -27,7 +27,7 @@ var defaultExcludedExtensions = []string{
 // InURLRequirement stores path and parameter constraints
 type InURLRequirement struct {
 	RawPattern string
-	PathPart   string // e.g. "php" or "page.php" or "/admin/"
+	PathPart   string // e.g. "php" or "page.php"
 	ParamPart  string // e.g. "id=" or "id"
 }
 
@@ -42,7 +42,7 @@ type DorkRule struct {
 	RawDork        string
 }
 
-// ExtractRulesFromDork parses any search engine dork query with all operators.
+// ExtractRulesFromDork parses search engine dorks with all operators
 func ExtractRulesFromDork(dork string) *DorkRule {
 	rule := &DorkRule{RawDork: dork}
 
@@ -123,13 +123,15 @@ func ExtractRulesFromDork(dork string) *DorkRule {
 	return rule
 }
 
-// GenerateClusterDorks expands a dork into smart clusterbomb permutations compatible with search engines
+// GenerateClusterDorks expands dorks when search engines require syntax adaptation (e.g. slashes in inurl:)
 func GenerateClusterDorks(dork string) []string {
 	var cluster []string
 	dork = strings.TrimSpace(dork)
 	dorkLower := strings.ToLower(dork)
 
-	if strings.Contains(dorkLower, "inurl:") {
+	// If inurl: contains a slash '/', search engines (Bing, Yahoo) fail on the slash.
+	// Decompose inurl:admin/login.php -> inurl:admin inurl:login.php
+	if strings.Contains(dorkLower, "inurl:") && strings.Contains(dorkLower, "/") {
 		tokens := parseTokens(dork)
 		var nonInurls []string
 		var inurlPatterns []string
@@ -163,7 +165,6 @@ func GenerateClusterDorks(dork string) []string {
 					}
 					cluster = append(cluster, strings.TrimSpace(strings.Join(inurlCombo, " ")+" "+suffix))
 					cluster = append(cluster, strings.TrimSpace("inurl:"+validSegs[0]+" \""+validSegs[len(validSegs)-1]+"\" "+suffix))
-					cluster = append(cluster, strings.TrimSpace("\""+pat+"\" "+suffix))
 
 					if strings.Contains(pat, "admin") && strings.Contains(pat, "login") {
 						cluster = append(cluster,
@@ -174,19 +175,10 @@ func GenerateClusterDorks(dork string) []string {
 					}
 				}
 			}
-
-			if strings.Contains(pat, "php?id=") || strings.Contains(pat, ".php?id=") {
-				cluster = append(cluster,
-					strings.TrimSpace("inurl:index.php?id= "+suffix),
-					strings.TrimSpace("inurl:page.php?id= "+suffix),
-					strings.TrimSpace("inurl:view.php?id= "+suffix),
-					strings.TrimSpace("inurl:item.php?id= "+suffix),
-					strings.TrimSpace("inurl:article.php?id= "+suffix),
-				)
-			}
 		}
 	}
 
+	// Always include original dork
 	cluster = append(cluster, dork)
 
 	// Deduplicate cluster
@@ -231,7 +223,7 @@ func parseTokens(query string) []string {
 	return tokens
 }
 
-// IsValidURL checks a URL against all positive and negative dork rules with strict semantic accuracy
+// IsValidURL checks a URL against all positive and negative dork rules
 func IsValidURL(rawURL string, rule *DorkRule) bool {
 	if rawURL == "" {
 		return false
@@ -252,7 +244,7 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 	query := strings.ToLower(parsed.RawQuery)
 	fullURL := strings.ToLower(rawURL)
 
-	// --- 1. DEFAULT PORTAL & ENGINE EXCLUSIONS ---
+	// --- 1. DEFAULT EXCLUSIONS ---
 	for _, excluded := range defaultExcludedDomains {
 		if strings.Contains(host, excluded) {
 			explicitlyTargeted := false
@@ -286,8 +278,7 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 	if strings.Contains(fullURL, "/url?q=") ||
 		strings.Contains(fullURL, "/search?") ||
 		strings.Contains(fullURL, "search.yahoo") ||
-		strings.Contains(fullURL, "bing.com/ck/") ||
-		strings.Contains(fullURL, "duckduckgo.com/l/") {
+		strings.Contains(fullURL, "bing.com") {
 		return false
 	}
 
@@ -345,97 +336,82 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 		}
 	}
 
-	// Enforce inurl: constraint strictly
+	// Enforce inurl: constraint
 	for _, req := range rule.InURLReqs {
 		pathAndQuery := path
 		if query != "" {
 			pathAndQuery += "?" + query
 		}
 
-		if !matchesInURLRequirement(pathAndQuery, path, query, host, req) {
-			return false
+		if strings.Contains(pathAndQuery, req.RawPattern) {
+			continue
 		}
+
+		// Multi-part query parameter match (e.g. php?id= or page.php?id=)
+		if req.PathPart != "" && req.ParamPart != "" {
+			pathMatches := strings.Contains(path, req.PathPart)
+			queryMatches := strings.Contains(query, req.ParamPart) || strings.Contains(query, strings.TrimSuffix(req.ParamPart, "=")+"=")
+
+			if pathMatches && queryMatches {
+				continue
+			}
+		}
+
+		// Multi-segment inurl path matching (e.g. admin/login.php)
+		if strings.Contains(req.RawPattern, "/") {
+			requiredExt := ""
+			if strings.Contains(req.RawPattern, ".") {
+				parts := strings.Split(req.RawPattern, ".")
+				requiredExt = "." + parts[len(parts)-1]
+			}
+
+			// If dork explicitly requires an extension (.php), reject non-matching extensions (.aspx, .htm, .html)
+			if requiredExt != "" && !strings.Contains(path, requiredExt) && !strings.Contains(query, requiredExt) {
+				return false
+			}
+
+			// Intent recognition for admin and login portals
+			if strings.Contains(req.RawPattern, "admin") && (strings.Contains(req.RawPattern, "login") || strings.Contains(req.RawPattern, "index")) {
+				if strings.Contains(pathAndQuery, "admin") && (strings.Contains(pathAndQuery, "login") || strings.Contains(pathAndQuery, "index") || strings.Contains(pathAndQuery, "php")) {
+					continue
+				}
+				if strings.Contains(pathAndQuery, "login.php") || strings.Contains(pathAndQuery, "index.php/admin") {
+					continue
+				}
+			}
+
+			segments := strings.Split(req.RawPattern, "/")
+			allSegmentsPresent := true
+			for _, seg := range segments {
+				seg = strings.TrimSpace(seg)
+				if seg == "" {
+					continue
+				}
+				baseName := seg
+				if requiredExt != "" {
+					baseName = strings.TrimSuffix(seg, requiredExt)
+				}
+				if !strings.Contains(pathAndQuery, seg) && !strings.Contains(pathAndQuery, baseName) {
+					allSegmentsPresent = false
+					break
+				}
+			}
+
+			if allSegmentsPresent {
+				continue
+			}
+		}
+
+		return false
 	}
 
 	return true
-}
-
-func matchesInURLRequirement(pathAndQuery, path, query, host string, req InURLRequirement) bool {
-	// 1. Direct exact substring match (e.g. /admin/login.php or php?id=)
-	if strings.Contains(pathAndQuery, req.RawPattern) {
-		return true
-	}
-
-	// 2. Multi-part query parameter match (e.g. php?id= or page.php?id=)
-	if req.PathPart != "" && req.ParamPart != "" {
-		pathMatches := strings.Contains(path, req.PathPart)
-		queryMatches := strings.Contains(query, req.ParamPart) || strings.Contains(query, strings.TrimSuffix(req.ParamPart, "=")+"=")
-		if pathMatches && queryMatches {
-			return true
-		}
-	}
-
-	// 3. Multi-segment inurl matching (e.g. admin/login.php or admin/index.php)
-	if strings.Contains(req.RawPattern, "/") {
-		// If dork specifies a file extension like .php or .asp
-		requiredExt := ""
-		if strings.Contains(req.RawPattern, ".") {
-			parts := strings.Split(req.RawPattern, ".")
-			requiredExt = "." + parts[len(parts)-1]
-		}
-
-		// If dork explicitly requires an extension (.php), strictly reject non-matching extensions (.aspx, .htm, .html)
-		if requiredExt != "" && !strings.Contains(path, requiredExt) && !strings.Contains(query, requiredExt) {
-			return false
-		}
-
-		// Intent recognition for admin and login portals (must have requiredExt)
-		if strings.Contains(req.RawPattern, "admin") && (strings.Contains(req.RawPattern, "login") || strings.Contains(req.RawPattern, "index")) {
-			if strings.Contains(pathAndQuery, "admin") && (strings.Contains(pathAndQuery, "login") || strings.Contains(pathAndQuery, "index") || strings.Contains(pathAndQuery, "php")) {
-				return true
-			}
-			if strings.Contains(pathAndQuery, "login.php") || strings.Contains(pathAndQuery, "index.php/admin") {
-				return true
-			}
-		}
-
-		// Check presence of all core path keywords
-		segments := strings.Split(req.RawPattern, "/")
-		allSegmentsPresent := true
-		for _, seg := range segments {
-			seg = strings.TrimSpace(seg)
-			if seg == "" {
-				continue
-			}
-			baseName := seg
-			if requiredExt != "" {
-				baseName = strings.TrimSuffix(seg, requiredExt)
-			}
-			if !strings.Contains(pathAndQuery, seg) && !strings.Contains(pathAndQuery, baseName) {
-				allSegmentsPresent = false
-				break
-			}
-		}
-
-		if allSegmentsPresent {
-			return true
-		}
-	}
-
-	return false
 }
 
 // ExtractRealURL unwraps search engine redirects
 func ExtractRealURL(raw string) string {
 	if strings.Contains(raw, "/url?q=") {
 		parts := strings.SplitN(raw, "/url?q=", 2)
-		if len(parts) == 2 {
-			target := strings.SplitN(parts[1], "&", 2)[0]
-			return unescapeURL(target)
-		}
-	}
-	if strings.Contains(raw, "uddg=") {
-		parts := strings.SplitN(raw, "uddg=", 2)
 		if len(parts) == 2 {
 			target := strings.SplitN(parts[1], "&", 2)[0]
 			return unescapeURL(target)
