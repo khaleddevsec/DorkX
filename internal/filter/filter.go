@@ -123,34 +123,88 @@ func ExtractRulesFromDork(dork string) *DorkRule {
 	return rule
 }
 
-// GenerateClusterDorks expands a dork into smart clusterbomb permutations to maximize discovery
+// GenerateClusterDorks expands any dork into smart clusterbomb permutations compatible with search engines
 func GenerateClusterDorks(dork string) []string {
 	var cluster []string
-	cluster = append(cluster, dork) // primary
-
+	dork = strings.TrimSpace(dork)
 	dorkLower := strings.ToLower(dork)
 
-	// 1. Expand inurl:admin/login.php or inurl:admin/index.php
-	if strings.Contains(dorkLower, "admin/login") || strings.Contains(dorkLower, "admin/index") {
-		cluster = append(cluster,
-			strings.ReplaceAll(dork, "admin/login.php", "admin/index.php"),
-			strings.ReplaceAll(dork, "admin/index.php", "admin/login.php"),
-			strings.ReplaceAll(dork, "inurl:admin/login.php", "inurl:admin inurl:login.php"),
-			strings.ReplaceAll(dork, "inurl:admin/login.php", "inurl:index.php/admin"),
-			strings.ReplaceAll(dork, "inurl:admin/login.php", "inurl:login.php intext:admin"),
-		)
+	// 1. If inurl: contains a slash '/', search engines (Bing, Yahoo, DDG, AOL) fail on the raw slash.
+	// We extract the inurl pattern and break it into engine-compatible terms.
+	if strings.Contains(dorkLower, "inurl:") {
+		tokens := parseTokens(dork)
+		var nonInurls []string
+		var inurlPatterns []string
+
+		for _, t := range tokens {
+			if strings.HasPrefix(strings.ToLower(t), "inurl:") {
+				val := strings.Trim(strings.TrimPrefix(t, "inurl:"), `"'`)
+				inurlPatterns = append(inurlPatterns, val)
+			} else {
+				nonInurls = append(nonInurls, t)
+			}
+		}
+
+		suffix := strings.Join(nonInurls, " ")
+
+		for _, pat := range inurlPatterns {
+			if strings.Contains(pat, "/") {
+				// e.g. admin/login.php -> segments: [admin, login.php]
+				segments := strings.Split(pat, "/")
+				var validSegs []string
+				for _, s := range segments {
+					s = strings.TrimSpace(s)
+					if s != "" {
+						validSegs = append(validSegs, s)
+					}
+				}
+
+				if len(validSegs) >= 2 {
+					// Variant 1: inurl:seg1 inurl:seg2
+					var inurlCombo []string
+					for _, s := range validSegs {
+						inurlCombo = append(inurlCombo, "inurl:"+s)
+					}
+					cluster = append(cluster, strings.TrimSpace(strings.Join(inurlCombo, " ")+" "+suffix))
+
+					// Variant 2: inurl:seg1 "seg2"
+					cluster = append(cluster, strings.TrimSpace("inurl:"+validSegs[0]+" \""+validSegs[len(validSegs)-1]+"\" "+suffix))
+
+					// Variant 3: inurl:seg2 "seg1"
+					cluster = append(cluster, strings.TrimSpace("inurl:"+validSegs[len(validSegs)-1]+" \""+validSegs[0]+"\" "+suffix))
+
+					// Variant 4: exact quote "seg1/seg2"
+					cluster = append(cluster, strings.TrimSpace("\""+pat+"\" "+suffix))
+
+					// Variant 5: if admin/login.php -> also add admin/index.php, admin/login
+					if strings.Contains(pat, "admin") && strings.Contains(pat, "login") {
+						cluster = append(cluster,
+							strings.TrimSpace("inurl:admin inurl:index.php "+suffix),
+							strings.TrimSpace("inurl:index.php inurl:admin "+suffix),
+							strings.TrimSpace("inurl:login.php inurl:admin "+suffix),
+							strings.TrimSpace("inurl:admin/login "+suffix),
+						)
+					}
+				}
+			}
+
+			// 2. Query param expansion (e.g. inurl:php?id=)
+			if strings.Contains(pat, "php?id=") || strings.Contains(pat, ".php?id=") {
+				cluster = append(cluster,
+					strings.TrimSpace("inurl:index.php?id= "+suffix),
+					strings.TrimSpace("inurl:page.php?id= "+suffix),
+					strings.TrimSpace("inurl:view.php?id= "+suffix),
+					strings.TrimSpace("inurl:item.php?id= "+suffix),
+					strings.TrimSpace("inurl:article.php?id= "+suffix),
+					strings.TrimSpace("inurl:product.php?id= "+suffix),
+					strings.TrimSpace("inurl:category.php?id= "+suffix),
+				)
+			}
+		}
 	}
 
-	// 2. Expand inurl:php?id= and query patterns
-	if strings.Contains(dorkLower, "inurl:php?id=") || strings.Contains(dorkLower, "inurl:.php?id=") {
-		cluster = append(cluster,
-			strings.ReplaceAll(dork, "inurl:php?id=", "inurl:index.php?id="),
-			strings.ReplaceAll(dork, "inurl:php?id=", "inurl:page.php?id="),
-			strings.ReplaceAll(dork, "inurl:php?id=", "inurl:view.php?id="),
-			strings.ReplaceAll(dork, "inurl:php?id=", "inurl:category.php?id="),
-			strings.ReplaceAll(dork, "inurl:php?id=", "inurl:article.php?id="),
-		)
-	}
+	// Always include original dork
+	cluster = append(cluster, dork)
 
 	// Deduplicate cluster
 	seen := make(map[string]bool)
