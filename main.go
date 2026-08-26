@@ -38,7 +38,7 @@ func printBanner() {
 	meta := ansiGray + "         by " + ansiReset +
 		ansiYellow + "Fr0z3n_1c3" + ansiReset +
 		ansiGray + " | " + ansiReset +
-		ansiCyan + AppVersion + ansiReset +
+		ansiCyan + updater.VersionInfo(AppVersion) + ansiReset +
 		ansiGray + " | " + ansiReset +
 		"https://github.com/frozeniceee/DorkX"
 
@@ -76,7 +76,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Println("dorkx " + AppVersion)
+		fmt.Println("dorkx " + updater.VersionInfo(AppVersion))
 		os.Exit(0)
 	}
 
@@ -84,7 +84,7 @@ func main() {
 		if !*silent {
 			printBanner()
 		}
-		updater.Update()
+		updater.Update(AppVersion)
 		os.Exit(0)
 	}
 
