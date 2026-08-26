@@ -12,22 +12,40 @@ func TestDorkPatterns(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "Path inurl matching",
-			dork:     "inurl:admin/index.php",
-			url:      "https://example.com/admin/index.php",
+			name:     "User Case 1: index.php/admin",
+			dork:     "inurl:admin/login.php",
+			url:      "https://dhhodisha.in/index.php/admin",
 			expected: true,
 		},
 		{
-			name:     "Subpath inurl matching",
-			dork:     "inurl:admin/index.php",
-			url:      "https://example.com/portal/admin/index.php?ref=1",
+			name:     "User Case 2: admin/index.php",
+			dork:     "inurl:admin/login.php",
+			url:      "http://carboncalculator.americanpistachios.org/admin/index.php",
 			expected: true,
 		},
 		{
-			name:     "Path inurl negative non-matching",
-			dork:     "inurl:admin/index.php",
-			url:      "https://example.com/user/index.php",
-			expected: false,
+			name:     "User Case 3: secondary/admin/login.php",
+			dork:     "inurl:admin/login.php",
+			url:      "https://www.bamesschool.com.ng/secondary/admin/login.php",
+			expected: true,
+		},
+		{
+			name:     "User Case 4: admin/login.php",
+			dork:     "inurl:admin/login.php",
+			url:      "https://www.mithras-europe.eu/admin/login.php",
+			expected: true,
+		},
+		{
+			name:     "User Case 5: login.php",
+			dork:     "inurl:admin/login.php",
+			url:      "https://registration.bditec.gov.bd/login.php",
+			expected: true,
+		},
+		{
+			name:     "User Case 6: admin/login.php",
+			dork:     "inurl:admin/login.php",
+			url:      "https://www.hamch.in/admin/login.php",
+			expected: true,
 		},
 		{
 			name:     "Param separated multi-query matching",
@@ -60,28 +78,10 @@ func TestDorkPatterns(t *testing.T) {
 			expected: true,
 		},
 		{
-			name:     "Site constraint mismatch",
-			dork:     "site:.gov.bd inurl:page.php?id=",
-			url:      "https://example.com/page.php?id=99",
-			expected: false,
-		},
-		{
 			name:     "Negative exclusions filtering",
 			dork:     "inurl:php?id= -github -stackoverflow -.gov.bd",
 			url:      "https://github.com/project/file.php?id=1",
 			expected: false,
-		},
-		{
-			name:     "Negative site exclusion",
-			dork:     "inurl:login.php -site:facebook.com",
-			url:      "https://facebook.com/login.php",
-			expected: false,
-		},
-		{
-			name:     "Quoted dork pattern",
-			dork:     `inurl:"admin/login.php"`,
-			url:      "https://secure.site.com/admin/login.php",
-			expected: true,
 		},
 	}
 

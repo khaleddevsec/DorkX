@@ -207,9 +207,10 @@ func (r *Runner) Run() {
 	}
 }
 
-// searchDork continuously queries until Target Limit is reached or engine index is exhausted
+// searchDork continuously queries using ClusterBomb permutations until Target Limit is reached
 func (r *Runner) searchDork(idx, total int, dork string) {
 	rule := filter.ExtractRulesFromDork(dork)
+	clusterDorks := filter.GenerateClusterDorks(dork)
 
 	if !r.cfg.Silent {
 		output.Dorkf("[%d/%d] %s (Target: %d URLs)\n", idx, total, dork, r.cfg.Limit)
@@ -232,109 +233,108 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 	}
 
 	foundForDork := 0
-	page := 0
-	consecutiveEmpty := 0
-	maxConsecutiveEmpty := 6
-	maxPagesSafetyLimit := 60
 
-	for foundForDork < r.cfg.Limit && page < maxPagesSafetyLimit && consecutiveEmpty < maxConsecutiveEmpty {
-		if page > 0 {
-			r.sleep()
+	for _, activeDork := range clusterDorks {
+		if foundForDork >= r.cfg.Limit {
+			break
 		}
 
-		proxyURL := r.nextProxy()
+		page := 0
+		consecutiveEmpty := 0
+		maxConsecutiveEmpty := 4
+		maxPagesSafetyLimit := 30
 
-		results, err := r.cfg.Engine.Search(dork, page, proxyURL, r.cfg.Timeout)
-		if err != nil {
-			if strings.Contains(err.Error(), "CAPTCHA") {
-				output.Warnf("CAPTCHA detected on dork [%s]. Try adding -proxy or using hybrid engine.\n", dork)
-				break
-			}
-			page++
-			consecutiveEmpty++
-			continue
-		}
-
-		if len(results) == 0 {
-			consecutiveEmpty++
-			page++
-			continue
-		}
-
-		pageNew := 0
-		for _, res := range results {
-			if foundForDork >= r.cfg.Limit {
-				break
+		for foundForDork < r.cfg.Limit && page < maxPagesSafetyLimit && consecutiveEmpty < maxConsecutiveEmpty {
+			if page > 0 {
+				r.sleep()
 			}
 
-			cleaned := filter.ExtractRealURL(res.RawURL)
+			proxyURL := r.nextProxy()
 
-			if !filter.IsValidURL(cleaned, rule) {
+			results, err := r.cfg.Engine.Search(activeDork, page, proxyURL, r.cfg.Timeout)
+			if err != nil {
+				if strings.Contains(err.Error(), "CAPTCHA") {
+					break
+				}
+				page++
+				consecutiveEmpty++
 				continue
 			}
 
-			r.mu.Lock()
-			alreadySeen := r.seenURLs[cleaned]
-			domainKey := filter.RootDomain(cleaned)
-			domainSeen := r.cfg.UniqueDomain && r.seenDomains[domainKey]
-			r.mu.Unlock()
-
-			if alreadySeen || domainSeen {
+			if len(results) == 0 {
+				consecutiveEmpty++
+				page++
 				continue
 			}
 
-			// Live Status Code Probe (if -status-code or -mc is set)
-			statusCode := 0
-			if r.cfg.StatusCode || len(r.matchCodes) > 0 {
-				statusCode = r.probeURL(cleaned, proxyURL)
+			pageNew := 0
+			for _, res := range results {
+				if foundForDork >= r.cfg.Limit {
+					break
+				}
 
-				// Filter by match code if specified (e.g. -mc 200)
-				if len(r.matchCodes) > 0 && !r.matchCodes[statusCode] {
+				cleaned := filter.ExtractRealURL(res.RawURL)
+
+				if !filter.IsValidURL(cleaned, rule) {
 					continue
 				}
-			}
 
-			r.mu.Lock()
-			r.seenURLs[cleaned] = true
-			r.seenDomains[domainKey] = true
-			r.totalFound++
-			r.mu.Unlock()
-
-			// Print to stdout (clean for piping)
-			if r.cfg.StatusCode && statusCode > 0 {
-				output.ResultWithStatus(cleaned, statusCode)
-			} else {
-				output.Result(cleaned)
-			}
-
-			// Write to output file
-			if r.outWriter != nil {
 				r.mu.Lock()
-				if r.cfg.StatusCode && statusCode > 0 {
-					fmt.Fprintf(r.outWriter, "%s [%d]\n", cleaned, statusCode)
-				} else {
-					fmt.Fprintln(r.outWriter, cleaned)
-				}
+				alreadySeen := r.seenURLs[cleaned]
+				domainKey := filter.RootDomain(cleaned)
+				domainSeen := r.cfg.UniqueDomain && r.seenDomains[domainKey]
 				r.mu.Unlock()
+
+				if alreadySeen || domainSeen {
+					continue
+				}
+
+				// Live Status Code Probe (if -status-code or -mc is set)
+				statusCode := 0
+				if r.cfg.StatusCode || len(r.matchCodes) > 0 {
+					statusCode = r.probeURL(cleaned, proxyURL)
+
+					// Filter by match code if specified (e.g. -mc 200)
+					if len(r.matchCodes) > 0 && !r.matchCodes[statusCode] {
+						continue
+					}
+				}
+
+				r.mu.Lock()
+				r.seenURLs[cleaned] = true
+				r.seenDomains[domainKey] = true
+				r.totalFound++
+				r.mu.Unlock()
+
+				// Print to stdout (clean for piping)
+				if r.cfg.StatusCode && statusCode > 0 {
+					output.ResultWithStatus(cleaned, statusCode)
+				} else {
+					output.Result(cleaned)
+				}
+
+				// Write to output file
+				if r.outWriter != nil {
+					r.mu.Lock()
+					if r.cfg.StatusCode && statusCode > 0 {
+						fmt.Fprintf(r.outWriter, "%s [%d]\n", cleaned, statusCode)
+					} else {
+						fmt.Fprintln(r.outWriter, cleaned)
+					}
+					r.mu.Unlock()
+				}
+
+				pageNew++
+				foundForDork++
 			}
 
-			pageNew++
-			foundForDork++
-		}
-
-		if pageNew > 0 {
-			consecutiveEmpty = 0
-		} else {
-			consecutiveEmpty++
-		}
-
-		page++
-
-		if foundForDork >= r.cfg.Limit {
-			if !r.cfg.Silent {
-				output.Successf("Target limit of %d URLs reached for this dork!\n", r.cfg.Limit)
+			if pageNew > 0 {
+				consecutiveEmpty = 0
+			} else {
+				consecutiveEmpty++
 			}
-			break
+
+			page++
 		}
 	}
 
