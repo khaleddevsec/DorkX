@@ -44,6 +44,7 @@ func randomUA() string {
 
 func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 	transport := &http.Transport{
+		ForceAttemptHTTP2: true,
 		DisableKeepAlives: false,
 		MaxIdleConns:      30,
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
@@ -62,82 +63,12 @@ func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 		Transport: transport,
 		Timeout:   time.Duration(effectiveTimeout) * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
+			if len(via) >= 10 {
+				return http.ErrUseLastResponse
+			}
+			return nil
 		},
 	}
-}
-
-// ---- Yahoo Engine ------------------------------------------------------------
-
-type YahooEngine struct{}
-
-func NewYahooEngine() *YahooEngine {
-	return &YahooEngine{}
-}
-
-func (y *YahooEngine) Name() string { return "Yahoo" }
-
-var yahooRUMatch = regexp.MustCompile(`/RU=([^/]+)/RK=`)
-var yahooDirectHref = regexp.MustCompile(`href=["'](https?://[^"'\s>]+)["']`)
-
-func (y *YahooEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
-	start := (page * 20) + 1
-	searchURL := fmt.Sprintf(
-		"https://search.yahoo.com/search?p=%s&n=50&b=%d",
-		url.QueryEscape(dork),
-		start,
-	)
-
-	client := buildClient(proxyURL, timeout)
-	req, err := http.NewRequest("GET", searchURL, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("User-Agent", randomUA())
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 429 || resp.StatusCode == 503 {
-		return nil, fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-	if err != nil {
-		return nil, err
-	}
-
-	bodyStr := string(body)
-	var results []Result
-	seen := make(map[string]bool)
-
-	// 1. Match /RU=.../RK= tracking links
-	matches := yahooRUMatch.FindAllStringSubmatch(bodyStr, -1)
-	for _, m := range matches {
-		decoded, err := url.QueryUnescape(m[1])
-		if err == nil && strings.HasPrefix(decoded, "http") && !seen[decoded] {
-			seen[decoded] = true
-			results = append(results, Result{RawURL: decoded, Source: y.Name()})
-		}
-	}
-
-	// 2. Match direct href links
-	directMatches := yahooDirectHref.FindAllStringSubmatch(bodyStr, -1)
-	for _, m := range directMatches {
-		u := m[1]
-		if !seen[u] && !strings.Contains(u, "yahoo.com") && !strings.Contains(u, "yimg.com") {
-			seen[u] = true
-			results = append(results, Result{RawURL: u, Source: y.Name()})
-		}
-	}
-
-	return results, nil
 }
 
 // ---- Bing Engine -------------------------------------------------------------
@@ -217,7 +148,7 @@ func (b *BingEngine) Search(dork string, page int, proxyURL *url.URL, timeout in
 	matches := bingCkMatch.FindAllStringSubmatch(bodyStr, -1)
 	for _, m := range matches {
 		decoded := decodeBingRedirect(m[1])
-		if !seen[decoded] && !strings.Contains(decoded, "bing.com") && !strings.Contains(decoded, "microsoft.com") {
+		if !seen[decoded] && strings.HasPrefix(decoded, "http") && !strings.Contains(decoded, "bing.com") && !strings.Contains(decoded, "microsoft.com") {
 			seen[decoded] = true
 			results = append(results, Result{RawURL: decoded, Source: b.Name()})
 		}
@@ -227,7 +158,10 @@ func (b *BingEngine) Search(dork string, page int, proxyURL *url.URL, timeout in
 	directMatches := bingDirectHref.FindAllStringSubmatch(bodyStr, -1)
 	for _, m := range directMatches {
 		u := m[1]
-		if !seen[u] && !strings.Contains(u, "bing.com") && !strings.Contains(u, "microsoft.com") {
+		if strings.Contains(u, "/ck/a") {
+			u = decodeBingRedirect(u)
+		}
+		if !seen[u] && strings.HasPrefix(u, "http") && !strings.Contains(u, "bing.com") && !strings.Contains(u, "microsoft.com") {
 			seen[u] = true
 			results = append(results, Result{RawURL: u, Source: b.Name()})
 		}
@@ -236,153 +170,73 @@ func (b *BingEngine) Search(dork string, page int, proxyURL *url.URL, timeout in
 	return results, nil
 }
 
-// ---- DuckDuckGo HTML Engine -------------------------------------------------
+// ---- Yahoo Engine (with Multi-Region Fallback) -------------------------------
 
-type DuckDuckGoEngine struct{}
+type YahooEngine struct{}
 
-func NewDuckDuckGoEngine() *DuckDuckGoEngine {
-	return &DuckDuckGoEngine{}
+func NewYahooEngine() *YahooEngine {
+	return &YahooEngine{}
 }
 
-func (d *DuckDuckGoEngine) Name() string { return "DuckDuckGo" }
+func (y *YahooEngine) Name() string { return "Yahoo" }
 
-var ddgUddgMatch = regexp.MustCompile(`uddg=([^&"'>]+)`)
-var ddgResultHref = regexp.MustCompile(`<a\s+[^>]*class=["'][^"']*result__(?:url|snippet|title)[^"']*["'][^>]*href=["']([^"']+)["']`)
+var yahooRUMatch = regexp.MustCompile(`/RU=([^/]+)/RK=`)
+var yahooDirectHref = regexp.MustCompile(`href=["'](https?://[^"'\s>]+)["']`)
 
-func (d *DuckDuckGoEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
-	// DuckDuckGo HTML search endpoint
-	searchURL := "https://html.duckduckgo.com/html/"
-
-	client := buildClient(proxyURL, timeout)
-	
-	formData := url.Values{}
-	formData.Set("q", dork)
-	if page > 0 {
-		formData.Set("s", fmt.Sprintf("%d", page*30))
-	}
-
-	req, err := http.NewRequest("POST", searchURL, strings.NewReader(formData.Encode()))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("User-Agent", randomUA())
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 429 || resp.StatusCode == 503 {
-		return nil, fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-	if err != nil {
-		return nil, err
-	}
-
-	bodyStr := string(body)
-	var results []Result
-	seen := make(map[string]bool)
-
-	// 1. Extract uddg= tracking links
-	matches := ddgUddgMatch.FindAllStringSubmatch(bodyStr, -1)
-	for _, m := range matches {
-		decoded, err := url.QueryUnescape(m[1])
-		if err == nil && strings.HasPrefix(decoded, "http") && !seen[decoded] {
-			if !strings.Contains(decoded, "duckduckgo.com") {
-				seen[decoded] = true
-				results = append(results, Result{RawURL: decoded, Source: d.Name()})
-			}
-		}
-	}
-
-	// 2. Extract direct class hrefs
-	hrefMatches := ddgResultHref.FindAllStringSubmatch(bodyStr, -1)
-	for _, m := range hrefMatches {
-		u := m[1]
-		if strings.Contains(u, "uddg=") {
-			parts := strings.Split(u, "uddg=")
-			if len(parts) > 1 {
-				cleanTarget, err := url.QueryUnescape(strings.Split(parts[1], "&")[0])
-				if err == nil && strings.HasPrefix(cleanTarget, "http") && !seen[cleanTarget] {
-					seen[cleanTarget] = true
-					results = append(results, Result{RawURL: cleanTarget, Source: d.Name()})
-				}
-			}
-		} else if strings.HasPrefix(u, "http") && !strings.Contains(u, "duckduckgo.com") && !seen[u] {
-			seen[u] = true
-			results = append(results, Result{RawURL: u, Source: d.Name()})
-		}
-	}
-
-	return results, nil
+var yahooHosts = []string{
+	"https://ca.search.yahoo.com/search",
+	"https://hk.search.yahoo.com/search",
+	"https://search.yahoo.com/search",
 }
 
-// ---- AOL Engine -------------------------------------------------------------
-
-type AOLEngine struct{}
-
-func NewAOLEngine() *AOLEngine {
-	return &AOLEngine{}
-}
-
-func (a *AOLEngine) Name() string { return "AOL" }
-
-func (a *AOLEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
+func (y *YahooEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
 	start := (page * 20) + 1
-	searchURL := fmt.Sprintf(
-		"https://search.aol.com/aol/search?q=%s&b=%d&pz=50",
-		url.QueryEscape(dork),
-		start,
-	)
-
 	client := buildClient(proxyURL, timeout)
-	req, err := http.NewRequest("GET", searchURL, nil)
-	if err != nil {
-		return nil, err
-	}
 
-	req.Header.Set("User-Agent", randomUA())
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	for _, host := range yahooHosts {
+		searchURL := fmt.Sprintf("%s?p=%s&b=%d", host, url.QueryEscape(dork), start)
+		req, err := http.NewRequest("GET", searchURL, nil)
+		if err != nil {
+			continue
+		}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+		req.Header.Set("User-Agent", randomUA())
+		req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+		req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
-	if resp.StatusCode == 429 || resp.StatusCode == 503 {
-		return nil, fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-	if err != nil {
-		return nil, err
-	}
-
-	bodyStr := string(body)
-	var results []Result
-	seen := make(map[string]bool)
-
-	matches := yahooRUMatch.FindAllStringSubmatch(bodyStr, -1)
-	for _, m := range matches {
-		decoded, err := url.QueryUnescape(m[1])
-		if err == nil && strings.HasPrefix(decoded, "http") && !seen[decoded] {
-			if !strings.Contains(decoded, "aol.com") {
-				seen[decoded] = true
-				results = append(results, Result{RawURL: decoded, Source: a.Name()})
+		resp, err := client.Do(req)
+		if err != nil || resp.StatusCode >= 400 {
+			if resp != nil {
+				resp.Body.Close()
 			}
+			continue
+		}
+
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+		resp.Body.Close()
+		if err != nil {
+			continue
+		}
+
+		bodyStr := string(body)
+		var results []Result
+		seen := make(map[string]bool)
+
+		matches := yahooRUMatch.FindAllStringSubmatch(bodyStr, -1)
+		for _, m := range matches {
+			decoded, err := url.QueryUnescape(m[1])
+			if err == nil && strings.HasPrefix(decoded, "http") && !seen[decoded] && !strings.Contains(decoded, "yahoo.com") {
+				seen[decoded] = true
+				results = append(results, Result{RawURL: decoded, Source: y.Name()})
+			}
+		}
+
+		if len(results) > 0 {
+			return results, nil
 		}
 	}
 
-	return results, nil
+	return nil, nil
 }
 
 // ---- Google HTML Engine -----------------------------------------------------
@@ -543,10 +397,8 @@ type HybridEngine struct {
 func NewHybridEngine(engines ...Engine) *HybridEngine {
 	if len(engines) == 0 {
 		engines = []Engine{
-			NewYahooEngine(),
 			NewBingEngine(),
-			NewDuckDuckGoEngine(),
-			NewAOLEngine(),
+			NewYahooEngine(),
 		}
 	}
 	return &HybridEngine{engines: engines}

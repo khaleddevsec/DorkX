@@ -135,10 +135,6 @@ func main() {
 		searchEngine = engine.NewYahooEngine()
 	case "bing":
 		searchEngine = engine.NewBingEngine()
-	case "duckduckgo", "ddg":
-		searchEngine = engine.NewDuckDuckGoEngine()
-	case "aol":
-		searchEngine = engine.NewAOLEngine()
 	case "google":
 		searchEngine = engine.NewGoogleEngine()
 	case "google-api", "cse":
@@ -152,16 +148,12 @@ func main() {
 			searchEngine = engine.NewHybridEngine(
 				engine.NewYahooEngine(),
 				engine.NewBingEngine(),
-				engine.NewDuckDuckGoEngine(),
-				engine.NewAOLEngine(),
 				engine.NewGoogleCSEEngine(*apiKey, *cx),
 			)
 		} else {
 			searchEngine = engine.NewHybridEngine(
 				engine.NewYahooEngine(),
 				engine.NewBingEngine(),
-				engine.NewDuckDuckGoEngine(),
-				engine.NewAOLEngine(),
 				engine.NewGoogleEngine(),
 			)
 		}
@@ -171,8 +163,6 @@ func main() {
 		searchEngine = engine.NewHybridEngine(
 			engine.NewYahooEngine(),
 			engine.NewBingEngine(),
-			engine.NewDuckDuckGoEngine(),
-			engine.NewAOLEngine(),
 		)
 	}
 

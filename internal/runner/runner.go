@@ -241,8 +241,8 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 
 		page := 0
 		consecutiveEmpty := 0
-		maxConsecutiveEmpty := 4
-		maxPagesSafetyLimit := 30
+		maxConsecutiveEmpty := 2
+		maxPagesSafetyLimit := 20
 
 		for foundForDork < r.cfg.Limit && page < maxPagesSafetyLimit && consecutiveEmpty < maxConsecutiveEmpty {
 			if page > 0 {

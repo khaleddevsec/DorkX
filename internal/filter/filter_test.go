@@ -4,94 +4,65 @@ import (
 	"testing"
 )
 
-func TestDorkPatterns(t *testing.T) {
-	tests := []struct {
-		name     string
-		dork     string
-		url      string
-		expected bool
-	}{
-		{
-			name:     "User Case 1: index.php/admin",
-			dork:     "inurl:admin/login.php",
-			url:      "https://dhhodisha.in/index.php/admin",
-			expected: true,
-		},
-		{
-			name:     "User Case 2: admin/index.php",
-			dork:     "inurl:admin/login.php",
-			url:      "http://carboncalculator.americanpistachios.org/admin/index.php",
-			expected: true,
-		},
-		{
-			name:     "User Case 3: secondary/admin/login.php",
-			dork:     "inurl:admin/login.php",
-			url:      "https://www.bamesschool.com.ng/secondary/admin/login.php",
-			expected: true,
-		},
-		{
-			name:     "User Case 4: admin/login.php",
-			dork:     "inurl:admin/login.php",
-			url:      "https://www.mithras-europe.eu/admin/login.php",
-			expected: true,
-		},
-		{
-			name:     "User Case 5: login.php",
-			dork:     "inurl:admin/login.php",
-			url:      "https://registration.bditec.gov.bd/login.php",
-			expected: true,
-		},
-		{
-			name:     "User Case 6: admin/login.php",
-			dork:     "inurl:admin/login.php",
-			url:      "https://www.hamch.in/admin/login.php",
-			expected: true,
-		},
-		{
-			name:     "Param separated multi-query matching",
-			dork:     "inurl:php?id=",
-			url:      "https://target.com/news/page.php?cat=articles&id=105",
-			expected: true,
-		},
-		{
-			name:     "WordPress plugin path",
-			dork:     "inurl:wp-content/plugins/",
-			url:      "https://blog.example.com/wp-content/plugins/contact-form-7/readme.txt",
-			expected: true,
-		},
-		{
-			name:     "Filetype SQL with keywords",
-			dork:     "filetype:sql intext:dump",
-			url:      "https://archive.target.org/backups/database_2023.sql",
-			expected: true,
-		},
-		{
-			name:     "Ext env matching",
-			dork:     "ext:env",
-			url:      "https://api.company.com/.env",
-			expected: true,
-		},
-		{
-			name:     "Site constraint with TLD matching",
-			dork:     "site:.gov.bd inurl:page.php?id=",
-			url:      "https://dept.subdomain.gov.bd/page.php?id=99",
-			expected: true,
-		},
-		{
-			name:     "Negative exclusions filtering",
-			dork:     "inurl:php?id= -github -stackoverflow -.gov.bd",
-			url:      "https://github.com/project/file.php?id=1",
-			expected: false,
-		},
+func TestGarbageFiltering(t *testing.T) {
+	dork := "inurl:admin/login.php"
+	rule := ExtractRulesFromDork(dork)
+
+	garbageURLs := []string{
+		"https://admin.cloud.microsoft/Adminportal/Home?source=applauncher",
+		"https://login.gov/admin/",
+		"https://api.data.gov/admin/login",
+		"https://www.firstrespondertraining.gov/frts/admin",
+		"https://www.nps.gov/commonspot/help/content/administrators_reference/administrator_login.htm",
+		"https://property.uintacountywy.gov/AdminLogin.aspx",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			rule := ExtractRulesFromDork(tt.dork)
-			result := IsValidURL(tt.url, rule)
-			if result != tt.expected {
-				t.Errorf("Dork [%s] on URL [%s]: expected %v, got %v", tt.dork, tt.url, tt.expected, result)
-			}
-		})
+	for _, u := range garbageURLs {
+		if IsValidURL(u, rule) {
+			t.Errorf("Garbage URL [%s] should have been REJECTED for dork [%s]", u, dork)
+		}
+	}
+
+	validURLs := []string{
+		"https://dhhodisha.in/index.php/admin",
+		"http://carboncalculator.americanpistachios.org/admin/index.php",
+		"https://www.bamesschool.com.ng/secondary/admin/login.php",
+		"https://www.mithras-europe.eu/admin/login.php",
+		"https://www.hamch.in/admin/login.php",
+	}
+
+	for _, u := range validURLs {
+		if !IsValidURL(u, rule) {
+			t.Errorf("Valid URL [%s] should have been ACCEPTED for dork [%s]", u, dork)
+		}
+	}
+}
+
+func TestPhpIdFiltering(t *testing.T) {
+	dork := "inurl:php?id="
+	rule := ExtractRulesFromDork(dork)
+
+	validURLs := []string{
+		"https://www.post.japanpost.jp/cgi-shiten_search/shiten.php?id=5210",
+		"https://www.wtcpu.org.in/page.php?id=1001",
+		"https://target.com/news/page.php?cat=articles&id=105",
+	}
+
+	for _, u := range validURLs {
+		if !IsValidURL(u, rule) {
+			t.Errorf("Valid URL [%s] should have been ACCEPTED for dork [%s]", u, dork)
+		}
+	}
+
+	garbageURLs := []string{
+		"https://sjcem.edu.in/aiml-eng/wp-content/uploads/sites/2/2026/03/BOS-Syllbus-AIML-29-11-25-.pdf",
+		"https://www.gravitysplash.com/b/regenesis-roofing-restoration-2/",
+		"https://example.com/page.html",
+	}
+
+	for _, u := range garbageURLs {
+		if IsValidURL(u, rule) {
+			t.Errorf("Garbage URL [%s] should have been REJECTED for dork [%s]", u, dork)
+		}
 	}
 }

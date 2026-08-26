@@ -123,14 +123,12 @@ func ExtractRulesFromDork(dork string) *DorkRule {
 	return rule
 }
 
-// GenerateClusterDorks expands any dork into smart clusterbomb permutations compatible with search engines
+// GenerateClusterDorks expands a dork into smart clusterbomb permutations compatible with search engines
 func GenerateClusterDorks(dork string) []string {
 	var cluster []string
 	dork = strings.TrimSpace(dork)
 	dorkLower := strings.ToLower(dork)
 
-	// 1. If inurl: contains a slash '/', search engines (Bing, Yahoo, DDG, AOL) fail on the raw slash.
-	// We extract the inurl pattern and break it into engine-compatible terms.
 	if strings.Contains(dorkLower, "inurl:") {
 		tokens := parseTokens(dork)
 		var nonInurls []string
@@ -149,7 +147,6 @@ func GenerateClusterDorks(dork string) []string {
 
 		for _, pat := range inurlPatterns {
 			if strings.Contains(pat, "/") {
-				// e.g. admin/login.php -> segments: [admin, login.php]
 				segments := strings.Split(pat, "/")
 				var validSegs []string
 				for _, s := range segments {
@@ -160,35 +157,24 @@ func GenerateClusterDorks(dork string) []string {
 				}
 
 				if len(validSegs) >= 2 {
-					// Variant 1: inurl:seg1 inurl:seg2
 					var inurlCombo []string
 					for _, s := range validSegs {
 						inurlCombo = append(inurlCombo, "inurl:"+s)
 					}
 					cluster = append(cluster, strings.TrimSpace(strings.Join(inurlCombo, " ")+" "+suffix))
-
-					// Variant 2: inurl:seg1 "seg2"
 					cluster = append(cluster, strings.TrimSpace("inurl:"+validSegs[0]+" \""+validSegs[len(validSegs)-1]+"\" "+suffix))
-
-					// Variant 3: inurl:seg2 "seg1"
-					cluster = append(cluster, strings.TrimSpace("inurl:"+validSegs[len(validSegs)-1]+" \""+validSegs[0]+"\" "+suffix))
-
-					// Variant 4: exact quote "seg1/seg2"
 					cluster = append(cluster, strings.TrimSpace("\""+pat+"\" "+suffix))
 
-					// Variant 5: if admin/login.php -> also add admin/index.php, admin/login
 					if strings.Contains(pat, "admin") && strings.Contains(pat, "login") {
 						cluster = append(cluster,
 							strings.TrimSpace("inurl:admin inurl:index.php "+suffix),
 							strings.TrimSpace("inurl:index.php inurl:admin "+suffix),
 							strings.TrimSpace("inurl:login.php inurl:admin "+suffix),
-							strings.TrimSpace("inurl:admin/login "+suffix),
 						)
 					}
 				}
 			}
 
-			// 2. Query param expansion (e.g. inurl:php?id=)
 			if strings.Contains(pat, "php?id=") || strings.Contains(pat, ".php?id=") {
 				cluster = append(cluster,
 					strings.TrimSpace("inurl:index.php?id= "+suffix),
@@ -196,14 +182,11 @@ func GenerateClusterDorks(dork string) []string {
 					strings.TrimSpace("inurl:view.php?id= "+suffix),
 					strings.TrimSpace("inurl:item.php?id= "+suffix),
 					strings.TrimSpace("inurl:article.php?id= "+suffix),
-					strings.TrimSpace("inurl:product.php?id= "+suffix),
-					strings.TrimSpace("inurl:category.php?id= "+suffix),
 				)
 			}
 		}
 	}
 
-	// Always include original dork
 	cluster = append(cluster, dork)
 
 	// Deduplicate cluster
@@ -248,7 +231,7 @@ func parseTokens(query string) []string {
 	return tokens
 }
 
-// IsValidURL checks a URL against all positive and negative dork rules with semantic pattern matching
+// IsValidURL checks a URL against all positive and negative dork rules with strict semantic accuracy
 func IsValidURL(rawURL string, rule *DorkRule) bool {
 	if rawURL == "" {
 		return false
@@ -362,7 +345,7 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 		}
 	}
 
-	// Enforce inurl: constraint with semantic pattern matching
+	// Enforce inurl: constraint strictly
 	for _, req := range rule.InURLReqs {
 		pathAndQuery := path
 		if query != "" {
@@ -378,7 +361,7 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 }
 
 func matchesInURLRequirement(pathAndQuery, path, query, host string, req InURLRequirement) bool {
-	// 1. Direct substring match
+	// 1. Direct exact substring match (e.g. /admin/login.php or php?id=)
 	if strings.Contains(pathAndQuery, req.RawPattern) {
 		return true
 	}
@@ -392,34 +375,50 @@ func matchesInURLRequirement(pathAndQuery, path, query, host string, req InURLRe
 		}
 	}
 
-	// 3. Structural Path Segments & Semantic Intent Matching
-	// e.g. for "admin/login.php": matches "/index.php/admin", "/admin/index.php", "/admin/login.php", "/login.php", etc.
+	// 3. Multi-segment inurl matching (e.g. admin/login.php or admin/index.php)
 	if strings.Contains(req.RawPattern, "/") {
-		segments := strings.Split(req.RawPattern, "/")
-		allSegmentsFound := true
-		for _, seg := range segments {
-			seg = strings.TrimSpace(seg)
-			if seg == "" {
-				continue
-			}
-			baseName := strings.TrimSuffix(seg, ".php")
-			if !strings.Contains(pathAndQuery, seg) && !strings.Contains(pathAndQuery, baseName) {
-				allSegmentsFound = false
-				break
-			}
-		}
-		if allSegmentsFound {
-			return true
+		// If dork specifies a file extension like .php or .asp
+		requiredExt := ""
+		if strings.Contains(req.RawPattern, ".") {
+			parts := strings.Split(req.RawPattern, ".")
+			requiredExt = "." + parts[len(parts)-1]
 		}
 
-		// Pattern intent recognition for admin portals
+		// If dork explicitly requires an extension (.php), strictly reject non-matching extensions (.aspx, .htm, .html)
+		if requiredExt != "" && !strings.Contains(path, requiredExt) && !strings.Contains(query, requiredExt) {
+			return false
+		}
+
+		// Intent recognition for admin and login portals (must have requiredExt)
 		if strings.Contains(req.RawPattern, "admin") && (strings.Contains(req.RawPattern, "login") || strings.Contains(req.RawPattern, "index")) {
-			if strings.Contains(pathAndQuery, "admin") && (strings.Contains(pathAndQuery, "login") || strings.Contains(pathAndQuery, "index") || strings.Contains(pathAndQuery, "admin")) {
+			if strings.Contains(pathAndQuery, "admin") && (strings.Contains(pathAndQuery, "login") || strings.Contains(pathAndQuery, "index") || strings.Contains(pathAndQuery, "php")) {
 				return true
 			}
 			if strings.Contains(pathAndQuery, "login.php") || strings.Contains(pathAndQuery, "index.php/admin") {
 				return true
 			}
+		}
+
+		// Check presence of all core path keywords
+		segments := strings.Split(req.RawPattern, "/")
+		allSegmentsPresent := true
+		for _, seg := range segments {
+			seg = strings.TrimSpace(seg)
+			if seg == "" {
+				continue
+			}
+			baseName := seg
+			if requiredExt != "" {
+				baseName = strings.TrimSuffix(seg, requiredExt)
+			}
+			if !strings.Contains(pathAndQuery, seg) && !strings.Contains(pathAndQuery, baseName) {
+				allSegmentsPresent = false
+				break
+			}
+		}
+
+		if allSegmentsPresent {
+			return true
 		}
 	}
 
