@@ -15,22 +15,22 @@ const RepoURL = "github.com/frozeniceee/DorkX@latest"
 func Update() {
 	output.Infof("Updating DorkX to the latest version from GitHub...\n")
 
-	// 1. Try updating via "go install github.com/frozeniceee/DorkX@latest"
+	homeDir, _ := os.UserHomeDir()
+
+	// Locate Go executable
 	goPath, err := exec.LookPath("go")
 	if err != nil {
-		// Fallback to common Linux path
 		if _, statErr := os.Stat("/usr/local/go/bin/go"); statErr == nil {
 			goPath = "/usr/local/go/bin/go"
 		}
 	}
 
+	// 1. Try Go direct install
 	if goPath != "" {
 		cmd := exec.Command(goPath, "install", "-v", RepoURL)
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err == nil {
-			// Find compiled binary
-			homeDir, _ := os.UserHomeDir()
 			goBin := filepath.Join(homeDir, "go", "bin", "dorkx")
 			if os.Getenv("GOBIN") != "" {
 				goBin = filepath.Join(os.Getenv("GOBIN"), "dorkx")
@@ -41,30 +41,34 @@ func Update() {
 			if _, err := os.Stat(goBin); err == nil {
 				copyBinary(goBin, "/usr/local/bin/dorkx")
 				copyBinary(goBin, "/usr/local/go/bin/dorkx")
+				output.Successf("DorkX successfully updated to the latest version!\n")
+				fmt.Fprintln(os.Stderr, "Run 'dorkx -version' to verify.")
+				return
 			}
-
-			output.Successf("DorkX successfully updated to the latest version!\n")
-			fmt.Fprintln(os.Stderr, "Run 'dorkx -version' to verify.")
-			return
 		}
 	}
 
-	// 2. Fallback: If inside a git repository, pull and build locally
-	if _, err := os.Stat(".git"); err == nil {
-		output.Infof("Pulling latest changes from git repository...\n")
-		pullCmd := exec.Command("git", "pull")
-		pullCmd.Stdout = os.Stderr
-		pullCmd.Stderr = os.Stderr
-		if err := pullCmd.Run(); err == nil {
-			if goPath != "" {
-				buildCmd := exec.Command(goPath, "build", "-o", "dorkx", ".")
-				buildCmd.Stdout = os.Stderr
-				buildCmd.Stderr = os.Stderr
-				if err := buildCmd.Run(); err == nil {
-					copyBinary("dorkx", "/usr/local/bin/dorkx")
-					copyBinary("dorkx", "/usr/local/go/bin/dorkx")
-					output.Successf("DorkX successfully updated and recompiled!\n")
-					return
+	// 2. Fallback: Check local repo in current dir or ~/DorkX
+	repoDirs := []string{".", filepath.Join(homeDir, "DorkX")}
+	for _, dir := range repoDirs {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			output.Infof("Pulling latest version from %s...\n", dir)
+			pullCmd := exec.Command("git", "-C", dir, "pull")
+			pullCmd.Stdout = os.Stderr
+			pullCmd.Stderr = os.Stderr
+			if err := pullCmd.Run(); err == nil {
+				if goPath != "" {
+					outBin := filepath.Join(dir, "dorkx")
+					buildCmd := exec.Command(goPath, "build", "-o", outBin, dir)
+					buildCmd.Stdout = os.Stderr
+					buildCmd.Stderr = os.Stderr
+					if err := buildCmd.Run(); err == nil {
+						copyBinary(outBin, "/usr/local/bin/dorkx")
+						copyBinary(outBin, "/usr/local/go/bin/dorkx")
+						output.Successf("DorkX successfully updated to the latest version!\n")
+						fmt.Fprintln(os.Stderr, "Run 'dorkx -version' to verify.")
+						return
+					}
 				}
 			}
 		}
