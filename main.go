@@ -7,10 +7,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/frozeniceee/DorkX/internal/engine"
-	"github.com/frozeniceee/DorkX/internal/output"
-	"github.com/frozeniceee/DorkX/internal/runner"
-	"github.com/frozeniceee/DorkX/internal/updater"
+	"github.com/khaleddevsec/DorkX/internal/engine"
+	"github.com/khaleddevsec/DorkX/internal/output"
+	"github.com/khaleddevsec/DorkX/internal/runner"
+	"github.com/khaleddevsec/DorkX/internal/updater"
 )
 
 // ANSI color codes
@@ -36,11 +36,11 @@ func printBanner() {
 
 	tagline := ansiBold + "              Dork CLI Tool" + ansiReset
 	meta := ansiGray + "         by " + ansiReset +
-		ansiYellow + "Fr0z3n_1c3" + ansiReset +
+		ansiYellow + "KhaledDevSec" + ansiReset +
 		ansiGray + " | " + ansiReset +
-		ansiCyan + updater.VersionInfo(AppVersion) + ansiReset +
+		ansiCyan + AppVersion + ansiReset +
 		ansiGray + " | " + ansiReset +
-		"https://github.com/frozeniceee/DorkX"
+		"https://github.com/khaleddevsec/DorkX"
 
 	fmt.Fprintln(os.Stderr, art)
 	fmt.Fprintln(os.Stderr, tagline)
@@ -54,7 +54,7 @@ func main() {
 	list         := flag.String("l", "", "Path to file containing dorks (one per line)")
 	outputFile   := flag.String("o", "", "Save results to file (e.g: -o results.txt)")
 	limit        := flag.Int("limit", 50, "Target number of unique matched URLs to collect (default: 50)")
-	engineName   := flag.String("e", "hybrid", "Search engine: hybrid (default: Yahoo + Bing + DuckDuckGo + AOL), yahoo, bing, duckduckgo, google, google-api, or all")
+	engineName   := flag.String("e", "hybrid", "Search engine: hybrid (default: Yahoo + Bing + DuckDuckGo), yahoo, bing, ddg, google, google-api, or all")
 	delay        := flag.String("delay", "1-2", "Delay range between requests in seconds (default: 1-2)")
 	proxy        := flag.String("proxy", "", "HTTP/SOCKS5 proxy URL (e.g: socks5://127.0.0.1:9050 or http://proxy:8080)")
 	proxyList    := flag.String("proxy-list", "", "Path to file with proxy list (round-robin rotation)")
@@ -63,6 +63,8 @@ func main() {
 	statusCode   := flag.Bool("status-code", false, "Probe and display HTTP status code (e.g: [200])")
 	scShort      := flag.Bool("sc", false, "Alias for -status-code")
 	matchCode    := flag.String("mc", "", "Match HTTP status code filter (e.g: -mc 200 or -mc 200,301)")
+	insecure     := flag.Bool("insecure", false, "Disable TLS certificate verification for target status probing")
+	kShort       := flag.Bool("k", false, "Alias for -insecure")
 	threads      := flag.Int("t", 1, "Number of concurrent dork searches (default: 1)")
 	timeout      := flag.Int("timeout", 25, "HTTP request timeout in seconds (default: 25)")
 	apiKey       := flag.String("api-key", os.Getenv("GOOGLE_API_KEY"), "Google Custom Search JSON API Key (for google-api engine)")
@@ -135,6 +137,8 @@ func main() {
 		searchEngine = engine.NewYahooEngine()
 	case "bing":
 		searchEngine = engine.NewBingEngine()
+	case "duckduckgo", "ddg":
+		searchEngine = engine.NewDuckDuckGoEngine()
 	case "google":
 		searchEngine = engine.NewGoogleEngine()
 	case "google-api", "cse":
@@ -148,12 +152,14 @@ func main() {
 			searchEngine = engine.NewHybridEngine(
 				engine.NewYahooEngine(),
 				engine.NewBingEngine(),
+				engine.NewDuckDuckGoEngine(),
 				engine.NewGoogleCSEEngine(*apiKey, *cx),
 			)
 		} else {
 			searchEngine = engine.NewHybridEngine(
 				engine.NewYahooEngine(),
 				engine.NewBingEngine(),
+				engine.NewDuckDuckGoEngine(),
 				engine.NewGoogleEngine(),
 			)
 		}
@@ -163,6 +169,7 @@ func main() {
 		searchEngine = engine.NewHybridEngine(
 			engine.NewYahooEngine(),
 			engine.NewBingEngine(),
+			engine.NewDuckDuckGoEngine(),
 		)
 	}
 
@@ -177,6 +184,7 @@ func main() {
 		UniqueDomain: *uniqueDomain,
 		StatusCode:   *statusCode || *scShort,
 		MatchCode:    *matchCode,
+		InsecureTLS:  *insecure || *kShort,
 		Threads:      *threads,
 		Timeout:      *timeout,
 		OutputFile:   *outputFile,
@@ -215,8 +223,8 @@ func readLines(path string) ([]string, error) {
 }
 
 func printUsage() {
-	fmt.Print(`
-DorkX - Dork Recon & Target URL Collector CLI by Fr0z3n_1c3
+	fmt.Fprint(os.Stderr, `
+DorkX - Dork Recon & Target URL Collector CLI by KhaledDevSec
 
 USAGE:
   dorkx [flags]
@@ -231,12 +239,13 @@ COLLECTION & FILTERING:
   -u                 Unique root domain mode: only output 1 URL per root domain
   -status-code, -sc  Live probe: verify and display HTTP status code (e.g: [200])
   -mc string         Match HTTP status codes only (e.g: -mc 200 or -mc 200,301)
+  -insecure, -k      Disable TLS certificate verification for target probing
   -t int             Number of concurrent dork searches (default: 1)
   -delay string      Delay range between requests in seconds (default: "1-2")
   -timeout int       HTTP request timeout in seconds (default: 25)
 
 ENGINE SELECTION:
-  -e string          Search engine: hybrid (default: Yahoo+Bing+DuckDuckGo+AOL), yahoo, bing, ddg, google, google-api, or all
+  -e string          Search engine: hybrid (default: Yahoo+Bing+DuckDuckGo), yahoo, bing, ddg, google, google-api, or all
   -api-key string    Google Custom Search API Key (for google-api engine)
   -cx string         Google Search Engine CX ID (for google-api engine)
 
@@ -265,21 +274,22 @@ DORK SYNTAX SUPPORTED:
 
 EXAMPLES:
   # 1. Basic Single Dork (Collects 50 unique targets):
-  dorkx -d "Dork" -o results.txt
+  dorkx -d "inurl:php?id=" -o results.txt
 
   # 2. Collect only live URLs responding with HTTP 200 OK:
-  dorkx -d "Dork" -status-code -mc 200 -limit 50 -o live_targets.txt
+  dorkx -d "inurl:php?id=" -status-code -mc 200 -limit 50 -o live_targets.txt
 
   # 3. Collect 100 targets while excluding noise domains:
-  dorkx -d "Dork -github -stackoverflow -.gov.bd" -limit 100 -o targets.txt
+  dorkx -d "inurl:php?id= -github -stackoverflow -.gov.bd" -limit 100 -o targets.txt
 
   # 4. Target government domains with 1 URL per unique domain:
-  dorkx -d "site:.gov.bd Dork" -limit 30 -u -o gov_targets.txt
+  dorkx -d "site:.gov.bd inurl:index.php" -limit 30 -u -o gov_targets.txt
 
   # 5. Recon Pipeline (Dork -> HTTP probe -> SQLi vulnerability scan):
-  dorkx -d "Dork" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
+  dorkx -d "inurl:php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
 
   # 6. Update DorkX to the latest version:
   dorkx -update
 `)
 }
+

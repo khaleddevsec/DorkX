@@ -7,55 +7,62 @@
 | (_| | (_) | |  |   < /  \ 
  \__,_|\___/|_|  |_|\_/_/\_\
   </pre>
-  <b>DorkX - Dork Recon & Target URL Collector CLI</b>
+  <b>DorkX - High-Performance Dork Recon & Target URL Collector CLI</b>
 </h1>
 
 <p align="center">
-  <b>Fast, zero-captcha, strict multi-engine dorking tool built for security researchers and bug bounty hunters.</b>
+  <b>Fast, zero-captcha, multi-engine dorking tool built for security researchers, penetration testers, and bug bounty hunters.</b>
 </p>
 
 <p align="center">
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Language-Go%201.21+-00ADD8?style=flat&logo=go" alt="Go"></a>
-  <a href="https://github.com/frozeniceee/DorkX/releases"><img src="https://img.shields.io/badge/Version-v3.1.0-brightgreen?style=flat" alt="Version"></a>
+  <a href="https://github.com/khaleddevsec/DorkX/releases"><img src="https://img.shields.io/badge/Version-v3.1.0-brightgreen?style=flat" alt="Version"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
-  <a href="https://github.com/frozeniceee/DorkX"><img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat" alt="Platform"></a>
+  <a href="https://github.com/khaleddevsec/DorkX"><img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat" alt="Platform"></a>
+  <a href="https://github.com/khaleddevsec/DorkX/actions"><img src="https://github.com/khaleddevsec/DorkX/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 ---
 
 ## Overview
 
-DorkX is a high-performance reconnaissance CLI tool designed to find and collect strictly-matching target URLs using search engine dorks. Built to seamlessly integrate into UNIX security pipelines alongside tools like `httpx`, `nuclei`, `subfinder`, and `katana`.
+**DorkX** is a high-performance, concurrent reconnaissance CLI tool designed to find and collect strictly matching target URLs using search engine dorks. Built from the ground up for seamless integration into UNIX security pipelines alongside tools like `httpx`, `nuclei`, `subfinder`, and `katana`.
 
 ### Key Features
 
-- **Limit-Based Target Collection (`-limit 50`)**: Specify the exact number of unique target URLs required (e.g. 50, 100, 500), and DorkX collects continuously until the limit is reached.
-- **Quad Hybrid Multi-Engine Engine (`-e hybrid`)**: Queries Yahoo, Bing, DuckDuckGo, and AOL concurrently out of the box with zero captchas, zero proxies, and no Tor setup required.
-- **Universal Dork Support**: Works seamlessly across all dork patterns: `inurl:`, `site:`, `filetype:`, `ext:`, `intitle:`, `"exact quotes"`, keyword combos, and negative exclusions (`-github`, `-site:`, `-inurl:`).
-- **Live HTTP Status Probe (`-status-code`, `-mc 200`)**: Verify if targets are live and filter out dead pages directly within DorkX.
-- **Self-Updating (`-update`)**: Update DorkX directly to the latest release with a single flag.
-- **Pipeline-First Design**: URLs are printed to `stdout` and logs to `stderr`, providing 100% compatibility with standard UNIX pipe workflows.
-- **Zero Dependencies**: Standalone compiled binary with no runtime dependencies.
+- **Limit-Based Target Collection (`-limit 50`)**: Specify the exact number of unique target URLs required (e.g. 50, 100, 500), and DorkX collects continuously across search pages until the limit is reached.
+- **Hybrid Multi-Engine Pool (`-e hybrid`)**: Queries Yahoo, Bing, and DuckDuckGo concurrently out of the box with zero captchas, zero mandatory API keys, and no Tor setup required.
+- **Universal Dork Operator Support**: Supports all standard search engine operators: `inurl:`, `site:`, `filetype:`, `ext:`, `intitle:`, `"exact quotes"`, keyword combos, and negative exclusions (`-github`, `-site:`, `-inurl:`).
+- **Live HTTP Status Probe (`-status-code`, `-mc 200`)**: Verify if targets are live and filter out dead or unreachable pages directly within DorkX.
+- **Root Domain Deduplication (`-u`)**: Automatically filters results to only keep 1 URL per unique root domain (supports ccTLDs like `.gov.bd`, `.co.uk`, `.com.au`).
+- **Pipeline-First Architecture**: Clean target URLs are written to `stdout` and logs/banners to `stderr`, providing 100% compatibility with standard UNIX pipe workflows (`|`).
+- **Safe Self-Updating (`-update`)**: Update DorkX directly to the latest release with a single command.
+- **Zero Dependencies**: Standalone compiled binary with zero external runtime dependencies.
 
 ---
 
 ## Installation
 
-### Method 1: Build from Source (Linux / WSL / macOS)
+### Method 1: Direct Install with Go (Recommended)
 
 ```bash
-git clone https://github.com/frozeniceee/DorkX.git
+go install github.com/khaleddevsec/DorkX@latest
+```
+
+Ensure `$GOPATH/bin` or `$HOME/go/bin` is in your system's `PATH`.
+
+### Method 2: Build from Source (Linux / macOS / Windows)
+
+```bash
+git clone https://github.com/khaleddevsec/DorkX.git
 cd DorkX
 go build -o dorkx .
-sudo cp -f dorkx /usr/local/bin/
-sudo cp -f dorkx /usr/local/go/bin/ 2>/dev/null || true
+sudo mv dorkx /usr/local/bin/
 ```
 
-### Method 2: Direct Install with Go
+### Method 3: Pre-Built Binaries
 
-```bash
-go install github.com/frozeniceee/DorkX@latest
-```
+Download pre-compiled binaries for Linux, macOS, and Windows directly from the [Releases](https://github.com/khaleddevsec/DorkX/releases) page.
 
 ---
 
@@ -77,37 +84,37 @@ dorkx [flags]
 
 ### 1. Basic Single Dork (Collects 50 unique targets by default)
 ```bash
-dorkx -d "Dork" -o results.txt
+dorkx -d "inurl:php?id=" -o results.txt
 ```
 
 ### 2. Collect only Live URLs Responding with HTTP 200 OK
 ```bash
-dorkx -d "Dork" -status-code -mc 200 -limit 50 -o live_targets.txt
+dorkx -d "inurl:php?id=" -status-code -mc 200 -limit 50 -o live_targets.txt
 ```
 
 ### 3. Collect an Exact Number of Targets (e.g. 100 targets)
 ```bash
-dorkx -d "Dork" -limit 100 -o targets.txt
+dorkx -d "inurl:php?id=" -limit 100 -o targets.txt
 ```
 
-### 4. Exclude Noise Domains & Keywords
+### 4. Exclude Noise Domains & False Positives
 ```bash
-dorkx -d "Dork -github -stackoverflow -.gov.bd" -limit 50 -o clean_targets.txt
+dorkx -d "inurl:php?id= -github -stackoverflow -.gov.bd" -limit 50 -o clean_targets.txt
 ```
 
 ### 5. Target Specific Country / TLD with 1 URL per Domain (`-u`)
 ```bash
-dorkx -d "site:.gov.bd Dork" -limit 30 -u -o gov_targets.txt
+dorkx -d "site:.gov.bd inurl:index.php" -limit 30 -u -o gov_targets.txt
 ```
 
 ### 6. Pipe into `httpx` and `nuclei` (Bug Bounty Pipeline)
 ```bash
-dorkx -d "Dork" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
+dorkx -d "inurl:php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -t sqli/
 ```
 
 ### 7. Bulk Dorking from File
 ```bash
-dorkx -l targets_dorks.txt -limit 50 -t 2 -o all_results.txt
+dorkx -l target_dorks.txt -limit 50 -t 2 -o all_results.txt
 ```
 
 ---
@@ -122,14 +129,15 @@ dorkx -l targets_dorks.txt -limit 50 -t 2 -o all_results.txt
 | `stdin` | `pipe` | `-` | Pipe dorks via standard input (`cat dorks.txt \| dorkx`) |
 | **Collection & Filtering** | | | |
 | `-limit` | `int` | `50` | Target number of unique strictly-matched URLs to collect |
-| `-u` | `bool` | `false` | Unique domain mode: only output 1 URL per root domain |
+| `-u` | `bool` | `false` | Unique domain mode: only output 1 URL per unique root domain |
 | `-status-code`, `-sc` | `bool` | `false` | Live probe: verify and display HTTP status code (e.g. `[200]`) |
 | `-mc` | `string` | `""` | Match status code filter (e.g. `-mc 200` or `-mc 200,301`) |
+| `-insecure`, `-k` | `bool` | `false` | Disable TLS certificate verification for target status probing |
 | `-t` | `int` | `1` | Number of concurrent dork searches |
 | `-delay` | `string` | `"1-2"` | Delay range in seconds between batch requests |
 | `-timeout` | `int` | `25` | HTTP request timeout in seconds |
 | **Engine Selection** | | | |
-| `-e` | `string` | `hybrid` | Search engine: `hybrid` (Yahoo+Bing+DuckDuckGo+AOL), `yahoo`, `bing`, `ddg`, `google`, `google-api`, or `all` |
+| `-e` | `string` | `hybrid` | Search engine: `hybrid` (Yahoo+Bing+DuckDuckGo), `yahoo`, `bing`, `ddg`, `google`, `google-api`, or `all` |
 | `-api-key` | `string` | `""` | Google Custom Search API Key (for `google-api` engine) |
 | `-cx` | `string` | `""` | Google Search Engine CX ID (for `google-api` engine) |
 | **Maintenance** | | | |
@@ -147,7 +155,7 @@ dorkx -l targets_dorks.txt -limit 50 -t 2 -o all_results.txt
 
 ## Supported Dork Operators
 
-DorkX supports all native search engine operator syntax:
+DorkX supports native search engine operator syntax:
 
 | Operator | Syntax Example | Meaning |
 | :--- | :--- | :--- |
@@ -171,17 +179,17 @@ dorkx -d "inurl:item.php?id= -site:amazon.com -site:ebay.com -stackoverflow file
 
 ### 1. Dorking to Live Host Probing with `httpx`
 ```bash
-dorkx -d "Dork" -limit 50 -silent | httpx -silent -status-code -title
+dorkx -d "inurl:php?id=" -limit 50 -silent | httpx -silent -status-code -title
 ```
 
 ### 2. Dorking to Vulnerability Scanning with `nuclei`
 ```bash
-dorkx -d "Dork" -limit 50 -silent | httpx -silent -mc 200 | nuclei -tags sqli -o sqli_vulnerable.txt
+dorkx -d "inurl:php?id=" -limit 50 -silent | httpx -silent -mc 200 | nuclei -tags sqli -o sqli_vulnerable.txt
 ```
 
 ### 3. Save Targets and Pipe Simultaneously with `tee`
 ```bash
-dorkx -d "Dork" -limit 100 -silent | tee targets.txt | httpx -silent
+dorkx -d "inurl:php?id=" -limit 100 -silent | tee targets.txt | httpx -silent
 ```
 
 ---
@@ -208,14 +216,21 @@ site:.edu inurl:index.php?id=
 
 Run in bulk:
 ```bash
-dorkx -l targets_dorks.txt -limit 50 -o bulk_targets.txt
+dorkx -l target_dorks.txt -limit 50 -o bulk_targets.txt
 ```
+
+---
+
+## Legal & Ethical Disclaimer
+
+> [!WARNING]
+> This tool is intended strictly for authorized educational purposes, defensive security auditing, and legitimate bug bounty research on programs where you have explicit permission to test. The author assumes no liability and is not responsible for any misuse or damage caused by this utility. Always comply with applicable local, state, and federal cybersecurity laws and program scopes.
 
 ---
 
 ## Contributing
 
-Contributions, issues, and feature requests are welcome. Feel free to check the [issues page](https://github.com/frozeniceee/DorkX/issues).
+Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/khaleddevsec/DorkX/issues) or submit a pull request.
 
 ---
 
@@ -226,5 +241,5 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 ---
 
 <p align="center">
-  Maintained by <b>Fr0z3n_1c3</b>
+  Maintained by <b><a href="https://github.com/khaleddevsec">KhaledDevSec</a></b>
 </p>

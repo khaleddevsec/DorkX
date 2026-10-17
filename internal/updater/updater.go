@@ -8,18 +8,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
-	"github.com/frozeniceee/DorkX/internal/output"
+	"github.com/khaleddevsec/DorkX/internal/output"
 )
 
-const RepoURL = "github.com/frozeniceee/DorkX@latest"
+const RepoURL = "github.com/khaleddevsec/DorkX@latest"
 
 // GetLatestVersion checks GitHub for the newest AppVersion
 func GetLatestVersion() string {
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get("https://raw.githubusercontent.com/frozeniceee/DorkX/main/main.go")
+	client := &http.Client{Timeout: 4 * time.Second}
+	resp, err := client.Get("https://raw.githubusercontent.com/khaleddevsec/DorkX/main/main.go")
 	if err != nil {
 		return ""
 	}
@@ -62,13 +63,19 @@ func Update(currentVersion string) {
 		return
 	}
 
-	output.Infof("Updating DorkX to %s...\n", latest)
+	if latest != "" {
+		output.Infof("Updating DorkX to %s...\n", latest)
+	}
 
 	homeDir, _ := os.UserHomeDir()
+	binName := "dorkx"
+	if runtime.GOOS == "windows" {
+		binName = "dorkx.exe"
+	}
 
 	// Locate Go compiler
 	goPath, err := exec.LookPath("go")
-	if err != nil {
+	if err != nil && runtime.GOOS != "windows" {
 		if _, statErr := os.Stat("/usr/local/go/bin/go"); statErr == nil {
 			goPath = "/usr/local/go/bin/go"
 		}
@@ -78,15 +85,16 @@ func Update(currentVersion string) {
 
 	// 1. Direct Go install
 	if goPath != "" {
+		output.Infof("Running: go install %s\n", RepoURL)
 		cmd := exec.Command(goPath, "install", "-v", RepoURL)
 		cmd.Stdout = os.Stderr
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err == nil {
-			goBin := filepath.Join(homeDir, "go", "bin", "dorkx")
+			goBin := filepath.Join(homeDir, "go", "bin", binName)
 			if os.Getenv("GOBIN") != "" {
-				goBin = filepath.Join(os.Getenv("GOBIN"), "dorkx")
+				goBin = filepath.Join(os.Getenv("GOBIN"), binName)
 			} else if os.Getenv("GOPATH") != "" {
-				goBin = filepath.Join(os.Getenv("GOPATH"), "bin", "dorkx")
+				goBin = filepath.Join(os.Getenv("GOPATH"), "bin", binName)
 			}
 
 			if _, err := os.Stat(goBin); err == nil {
@@ -107,7 +115,7 @@ func Update(currentVersion string) {
 				_ = pullCmd.Run()
 
 				if goPath != "" {
-					outBin := filepath.Join(dir, "dorkx")
+					outBin := filepath.Join(dir, binName)
 					buildCmd := exec.Command(goPath, "build", "-o", outBin, dir)
 					buildCmd.Stdout = os.Stderr
 					buildCmd.Stderr = os.Stderr
@@ -125,32 +133,33 @@ func Update(currentVersion string) {
 		return
 	}
 
-	// Overwrite all possible system paths safely
-	selfPath, _ := os.Executable()
-	destinations := []string{
-		selfPath,
-		"/usr/local/bin/dorkx",
-		"/usr/local/go/bin/dorkx",
-		filepath.Join(homeDir, "go", "bin", "dorkx"),
-		filepath.Join(homeDir, "DorkX", "dorkx"),
-	}
-
-	for _, dst := range destinations {
-		if dst != "" {
-			replaceBinary(compiledBinary, dst)
+	// Overwrite current running executable safely
+	selfPath, err := os.Executable()
+	if err == nil && selfPath != "" {
+		if err := replaceBinary(compiledBinary, selfPath); err == nil {
+			output.Successf("Updated current binary at %s\n", selfPath)
 		}
 	}
 
-	output.Successf("DorkX successfully updated to %s!\n", latest)
+	output.Successf("DorkX successfully updated!\n")
 	fmt.Fprintln(os.Stderr, "Run 'dorkx -version' to verify.")
 }
 
-func replaceBinary(src, dst string) {
+func replaceBinary(src, dst string) error {
+	if filepath.Clean(src) == filepath.Clean(dst) {
+		return nil
+	}
 	data, err := os.ReadFile(src)
 	if err != nil {
-		return
+		return err
 	}
-	// In Linux, unlinking the destination first avoids "text file busy" (ETXTBSY)
-	_ = os.Remove(dst)
-	_ = os.WriteFile(dst, data, 0755)
+	if runtime.GOOS == "windows" {
+		// On Windows, running binaries cannot be removed directly, but can be renamed
+		oldPath := dst + ".old"
+		_ = os.Remove(oldPath)
+		_ = os.Rename(dst, oldPath)
+	} else {
+		_ = os.Remove(dst)
+	}
+	return os.WriteFile(dst, data, 0755)
 }

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"fmt"
 	"math/rand"
 	"net/url"
 	"os"
@@ -28,6 +29,9 @@ func NewPool(proxyURLs []string) (*Pool, error) {
 			continue
 		}
 		pool.proxies = append(pool.proxies, parsed)
+	}
+	if len(pool.proxies) == 0 {
+		return nil, fmt.Errorf("no valid proxies found in proxy list")
 	}
 	return pool, nil
 }

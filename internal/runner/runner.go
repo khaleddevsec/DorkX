@@ -8,15 +8,17 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/frozeniceee/DorkX/internal/engine"
-	"github.com/frozeniceee/DorkX/internal/filter"
-	"github.com/frozeniceee/DorkX/internal/output"
-	"github.com/frozeniceee/DorkX/internal/proxy"
+	"github.com/khaleddevsec/DorkX/internal/engine"
+	"github.com/khaleddevsec/DorkX/internal/filter"
+	"github.com/khaleddevsec/DorkX/internal/output"
+	"github.com/khaleddevsec/DorkX/internal/proxy"
 )
 
 // Config holds all runtime configuration from CLI flags
@@ -34,6 +36,7 @@ type Config struct {
 	NoColor      bool
 	StatusCode   bool   // Probe and display HTTP status code
 	MatchCode    string // Filter by HTTP status code (e.g. "200" or "200,301")
+	InsecureTLS  bool   // Disable TLS verification for probed target URLs
 	Engine       engine.Engine
 }
 
@@ -82,8 +85,10 @@ func New(cfg *Config) *Runner {
 	r.probeClient = &http.Client{
 		Timeout: 6 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
-			DisableKeepAlives: true,
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: cfg.InsecureTLS},
+			DisableKeepAlives: false,
+			MaxIdleConns:      100,
+			IdleConnTimeout:   30 * time.Second,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
@@ -110,8 +115,10 @@ func (r *Runner) probeURL(target string, proxyURL *url.URL) int {
 	if proxyURL != nil {
 		tr := &http.Transport{
 			Proxy:             http.ProxyURL(proxyURL),
-			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
-			DisableKeepAlives: true,
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: r.cfg.InsecureTLS},
+			DisableKeepAlives: false,
+			MaxIdleConns:      100,
+			IdleConnTimeout:   30 * time.Second,
 		}
 		client = &http.Client{
 			Transport: tr,
@@ -139,13 +146,37 @@ func (r *Runner) Run() {
 		r.outFile = f
 		r.outWriter = bufio.NewWriter(f)
 		defer func() {
-			r.outWriter.Flush()
+			r.mu.Lock()
+			if r.outWriter != nil {
+				_ = r.outWriter.Flush()
+			}
 			f.Close()
+			r.mu.Unlock()
 		}()
 		if !r.cfg.Silent {
 			output.Infof("Saving results to: %s\n", r.cfg.OutputFile)
 		}
 	}
+
+	// Graceful shutdown on Interrupt (SIGINT / Ctrl+C)
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		r.mu.Lock()
+		if r.outWriter != nil {
+			_ = r.outWriter.Flush()
+		}
+		if r.outFile != nil {
+			_ = r.outFile.Close()
+		}
+		total := r.totalFound
+		r.mu.Unlock()
+		if !r.cfg.Silent {
+			output.Warnf("\n[!] Interrupted by user. Collected %d unique URLs before exit.\n", total)
+		}
+		os.Exit(0)
+	}()
 
 	if r.cfg.ProxyList != "" {
 		pool, err := proxy.NewPoolFromFile(r.cfg.ProxyList)
@@ -162,9 +193,14 @@ func (r *Runner) Run() {
 		if err != nil {
 			output.Warnf("Invalid proxy URL: %v\n", err)
 		} else {
-			r.proxyPool, _ = proxy.NewPool([]string{parsed.String()})
-			if !r.cfg.Silent {
-				output.Infof("Using proxy: %s\n", r.cfg.Proxy)
+			pool, err := proxy.NewPool([]string{parsed.String()})
+			if err != nil {
+				output.Warnf("Invalid proxy: %v\n", err)
+			} else {
+				r.proxyPool = pool
+				if !r.cfg.Silent {
+					output.Infof("Using proxy: %s\n", r.cfg.Proxy)
+				}
 			}
 		}
 	}
@@ -279,15 +315,23 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 					continue
 				}
 
-				r.mu.Lock()
-				alreadySeen := r.seenURLs[cleaned]
 				domainKey := filter.RootDomain(cleaned)
-				domainSeen := r.cfg.UniqueDomain && r.seenDomains[domainKey]
-				r.mu.Unlock()
 
-				if alreadySeen || domainSeen {
+				// Atomically check and reserve URL so concurrent threads never probe or output duplicates
+				r.mu.Lock()
+				if r.seenURLs[cleaned] {
+					r.mu.Unlock()
 					continue
 				}
+				if r.cfg.UniqueDomain && r.seenDomains[domainKey] {
+					r.mu.Unlock()
+					continue
+				}
+				r.seenURLs[cleaned] = true
+				if r.cfg.UniqueDomain {
+					r.seenDomains[domainKey] = true
+				}
+				r.mu.Unlock()
 
 				// Live Status Code Probe (if -status-code or -mc is set)
 				statusCode := 0
@@ -301,31 +345,28 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 				}
 
 				r.mu.Lock()
-				r.seenURLs[cleaned] = true
-				r.seenDomains[domainKey] = true
 				r.totalFound++
+				foundForDork++
+
+				// Write to output file with immediate flush to prevent data loss
+				if r.outWriter != nil {
+					if r.cfg.StatusCode && statusCode > 0 {
+						fmt.Fprintf(r.outWriter, "%s [%d]\n", cleaned, statusCode)
+					} else {
+						fmt.Fprintln(r.outWriter, cleaned)
+					}
+					_ = r.outWriter.Flush()
+				}
 				r.mu.Unlock()
 
-				// Print to stdout (clean for piping)
+				// Print to stdout (clean and thread-safe for pipes)
 				if r.cfg.StatusCode && statusCode > 0 {
 					output.ResultWithStatus(cleaned, statusCode)
 				} else {
 					output.Result(cleaned)
 				}
 
-				// Write to output file
-				if r.outWriter != nil {
-					r.mu.Lock()
-					if r.cfg.StatusCode && statusCode > 0 {
-						fmt.Fprintf(r.outWriter, "%s [%d]\n", cleaned, statusCode)
-					} else {
-						fmt.Fprintln(r.outWriter, cleaned)
-					}
-					r.mu.Unlock()
-				}
-
 				pageNew++
-				foundForDork++
 			}
 
 			if pageNew > 0 {

@@ -7,9 +7,12 @@ dorkx.exe
 # Output files
 *.txt
 
-# Go build artifacts
+# Build artifacts
 /vendor/
+dist/
+*.log
 
 # OS files
 .DS_Store
 Thumbs.db
+

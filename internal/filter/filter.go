@@ -158,22 +158,14 @@ func GenerateClusterDorks(dork string) []string {
 					}
 				}
 
-				if len(validSegs) >= 2 {
-					var inurlCombo []string
-					for _, s := range validSegs {
-						inurlCombo = append(inurlCombo, "inurl:"+s)
+					if len(validSegs) >= 2 {
+						var inurlCombo []string
+						for _, s := range validSegs {
+							inurlCombo = append(inurlCombo, "inurl:"+s)
+						}
+						cluster = append(cluster, strings.TrimSpace(strings.Join(inurlCombo, " ")+" "+suffix))
+						cluster = append(cluster, strings.TrimSpace("inurl:"+validSegs[0]+" \""+validSegs[len(validSegs)-1]+"\" "+suffix))
 					}
-					cluster = append(cluster, strings.TrimSpace(strings.Join(inurlCombo, " ")+" "+suffix))
-					cluster = append(cluster, strings.TrimSpace("inurl:"+validSegs[0]+" \""+validSegs[len(validSegs)-1]+"\" "+suffix))
-
-					if strings.Contains(pat, "admin") && strings.Contains(pat, "login") {
-						cluster = append(cluster,
-							strings.TrimSpace("inurl:admin inurl:index.php "+suffix),
-							strings.TrimSpace("inurl:index.php inurl:admin "+suffix),
-							strings.TrimSpace("inurl:login.php inurl:admin "+suffix),
-						)
-					}
-				}
 			}
 		}
 	}
@@ -370,16 +362,6 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 				return false
 			}
 
-			// Intent recognition for admin and login portals
-			if strings.Contains(req.RawPattern, "admin") && (strings.Contains(req.RawPattern, "login") || strings.Contains(req.RawPattern, "index")) {
-				if strings.Contains(pathAndQuery, "admin") && (strings.Contains(pathAndQuery, "login") || strings.Contains(pathAndQuery, "index") || strings.Contains(pathAndQuery, "php")) {
-					continue
-				}
-				if strings.Contains(pathAndQuery, "login.php") || strings.Contains(pathAndQuery, "index.php/admin") {
-					continue
-				}
-			}
-
 			segments := strings.Split(req.RawPattern, "/")
 			allSegmentsPresent := true
 			for _, seg := range segments {
@@ -408,37 +390,51 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 	return true
 }
 
-// ExtractRealURL unwraps search engine redirects
+// ExtractRealURL unwraps search engine redirects and cleans percent-encoded characters
 func ExtractRealURL(raw string) string {
+	raw = strings.TrimSpace(raw)
 	if strings.Contains(raw, "/url?q=") {
 		parts := strings.SplitN(raw, "/url?q=", 2)
 		if len(parts) == 2 {
 			target := strings.SplitN(parts[1], "&", 2)[0]
-			return unescapeURL(target)
+			if unescaped, err := url.QueryUnescape(target); err == nil && unescaped != "" {
+				return unescaped
+			}
+			return target
 		}
 	}
-	return unescapeURL(raw)
+	if unescaped, err := url.QueryUnescape(raw); err == nil && strings.HasPrefix(unescaped, "http") {
+		return unescaped
+	}
+	return raw
 }
 
-func unescapeURL(target string) string {
-	target = strings.ReplaceAll(target, "%3A", ":")
-	target = strings.ReplaceAll(target, "%3a", ":")
-	target = strings.ReplaceAll(target, "%2F", "/")
-	target = strings.ReplaceAll(target, "%2f", "/")
-	target = strings.ReplaceAll(target, "%3F", "?")
-	target = strings.ReplaceAll(target, "%3f", "?")
-	target = strings.ReplaceAll(target, "%3D", "=")
-	target = strings.ReplaceAll(target, "%3d", "=")
-	target = strings.ReplaceAll(target, "%26", "&")
-	return target
-}
-
-// RootDomain extracts the root domain from a URL for deduplication
+// RootDomain extracts the registered root domain (or eTLD+1) from a URL for deduplication
 func RootDomain(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return rawURL
 	}
 	host := strings.ToLower(parsed.Hostname())
-	return strings.TrimPrefix(host, "www.")
+	host = strings.TrimPrefix(host, "www.")
+
+	parts := strings.Split(host, ".")
+	if len(parts) <= 2 {
+		return host
+	}
+
+	// Common two-level ccTLD second-level domains (e.g. .gov.bd, .co.uk, .com.au, .edu.pk)
+	secondLevelTLDs := map[string]bool{
+		"co": true, "com": true, "edu": true, "gov": true, "net": true,
+		"org": true, "ac": true, "mil": true, "gen": true, "res": true,
+	}
+
+	last := parts[len(parts)-1]
+	secondLast := parts[len(parts)-2]
+
+	if len(last) == 2 && secondLevelTLDs[secondLast] && len(parts) >= 3 {
+		return strings.Join(parts[len(parts)-3:], ".")
+	}
+
+	return strings.Join(parts[len(parts)-2:], ".")
 }

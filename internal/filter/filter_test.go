@@ -15,6 +15,8 @@ func TestGarbageFiltering(t *testing.T) {
 		"https://www.firstrespondertraining.gov/frts/admin",
 		"https://www.nps.gov/commonspot/help/content/administrators_reference/administrator_login.htm",
 		"https://property.uintacountywy.gov/AdminLogin.aspx",
+		"https://dhhodisha.in/index.php/admin",
+		"http://carboncalculator.americanpistachios.org/admin/index.php",
 	}
 
 	for _, u := range garbageURLs {
@@ -24,8 +26,8 @@ func TestGarbageFiltering(t *testing.T) {
 	}
 
 	validURLs := []string{
-		"https://dhhodisha.in/index.php/admin",
-		"http://carboncalculator.americanpistachios.org/admin/index.php",
+		"https://www.example.com/admin/login.php",
+		"https://portal.site.org/app/admin/login.php?redirect=1",
 		"https://www.bamesschool.com.ng/secondary/admin/login.php",
 		"https://www.mithras-europe.eu/admin/login.php",
 		"https://www.hamch.in/admin/login.php",
@@ -66,3 +68,33 @@ func TestPhpIdFiltering(t *testing.T) {
 		}
 	}
 }
+
+func TestRootDomain(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected string
+	}{
+		{"https://www.example.com/page", "example.com"},
+		{"https://sub.portal.example.com/test", "example.com"},
+		{"https://portal.site.gov.bd/login", "site.gov.bd"},
+		{"https://api.app.co.uk/index.php", "app.co.uk"},
+		{"http://test.org.in/admin", "test.org.in"},
+	}
+
+	for _, tc := range tests {
+		got := RootDomain(tc.url)
+		if got != tc.expected {
+			t.Errorf("RootDomain(%s) = %s; want %s", tc.url, got, tc.expected)
+		}
+	}
+}
+
+func TestExtractRealURL(t *testing.T) {
+	raw := "https://www.google.com/url?q=https%3A%2F%2Ftarget.com%2Fadmin%2Flogin.php%3Fid%3D1&sa=U"
+	expected := "https://target.com/admin/login.php?id=1"
+	got := ExtractRealURL(raw)
+	if got != expected {
+		t.Errorf("ExtractRealURL(%s) = %s; want %s", raw, got, expected)
+	}
+}
+

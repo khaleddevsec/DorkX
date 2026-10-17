@@ -47,7 +47,7 @@ func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 		ForceAttemptHTTP2: true,
 		DisableKeepAlives: false,
 		MaxIdleConns:      30,
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
+		TLSClientConfig:   &tls.Config{InsecureSkipVerify: false},
 	}
 
 	if proxyURL != nil {
@@ -299,13 +299,29 @@ func (g *GoogleEngine) Search(dork string, page int, proxyURL *url.URL, timeout 
 		if len(match) < 2 {
 			continue
 		}
-		raw := match[1]
 
-		if strings.HasPrefix(raw, "/url?q=") {
-			raw = "/url?q=" + raw[7:]
+		var raw string
+		if strings.HasPrefix(match[1], "/url?q=") {
+			target := strings.TrimPrefix(match[1], "/url?q=")
+			target = strings.SplitN(target, "&", 2)[0]
+			if unescaped, err := url.QueryUnescape(target); err == nil && unescaped != "" {
+				raw = unescaped
+			} else {
+				raw = target
+			}
+		} else {
+			raw = match[1]
 		}
 
-		if !strings.HasPrefix(raw, "http") && !strings.HasPrefix(raw, "/url") {
+		if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+			continue
+		}
+
+		// Filter out Google own domains and assets
+		if strings.Contains(raw, "google.") ||
+			strings.Contains(raw, "gstatic.com") ||
+			strings.Contains(raw, "googleapis.com") ||
+			strings.Contains(raw, "youtube.com") {
 			continue
 		}
 
@@ -343,6 +359,11 @@ type googleCSEJSONResponse struct {
 }
 
 func (g *GoogleCSEEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
+	// Google CSE API supports start 1 to 91 (max 10 pages)
+	if page >= 10 {
+		return nil, nil
+	}
+
 	start := (page * 10) + 1
 	apiURL := fmt.Sprintf(
 		"https://www.googleapis.com/customsearch/v1?key=%s&cx=%s&q=%s&start=%d",
@@ -388,6 +409,77 @@ func (g *GoogleCSEEngine) Search(dork string, page int, proxyURL *url.URL, timeo
 	return results, nil
 }
 
+// ---- DuckDuckGo HTML Engine --------------------------------------------------
+
+type DuckDuckGoEngine struct{}
+
+func NewDuckDuckGoEngine() *DuckDuckGoEngine {
+	return &DuckDuckGoEngine{}
+}
+
+func (d *DuckDuckGoEngine) Name() string { return "DuckDuckGo" }
+
+var ddgUddgRegex = regexp.MustCompile(`uddg=([^&"'\s>]+)`)
+var ddgDirectHref = regexp.MustCompile(`<a\s+[^>]*class=["'][^"']*result__url[^"']*["'][^>]*href=["'](https?://[^"'\s>]+)["']`)
+
+func (d *DuckDuckGoEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
+	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", url.QueryEscape(dork))
+	if page > 0 {
+		searchURL = fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s&s=%d", url.QueryEscape(dork), page*30)
+	}
+
+	client := buildClient(proxyURL, timeout)
+	req, err := http.NewRequest("GET", searchURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", randomUA())
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 429 || resp.StatusCode == 503 {
+		return nil, fmt.Errorf("rate limited (HTTP %d)", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if err != nil {
+		return nil, err
+	}
+
+	bodyStr := string(body)
+	var results []Result
+	seen := make(map[string]bool)
+
+	// 1. Parse uddg redirected links
+	matches := ddgUddgRegex.FindAllStringSubmatch(bodyStr, -1)
+	for _, m := range matches {
+		decoded, err := url.QueryUnescape(m[1])
+		if err == nil && strings.HasPrefix(decoded, "http") && !seen[decoded] && !strings.Contains(decoded, "duckduckgo.com") {
+			seen[decoded] = true
+			results = append(results, Result{RawURL: decoded, Source: d.Name()})
+		}
+	}
+
+	// 2. Parse direct result__url links
+	directMatches := ddgDirectHref.FindAllStringSubmatch(bodyStr, -1)
+	for _, m := range directMatches {
+		u := m[1]
+		if !seen[u] && strings.HasPrefix(u, "http") && !strings.Contains(u, "duckduckgo.com") {
+			seen[u] = true
+			results = append(results, Result{RawURL: u, Source: d.Name()})
+		}
+	}
+
+	return results, nil
+}
+
 // ---- Hybrid Multi-Engine Pool ------------------------------------------------
 
 type HybridEngine struct {
@@ -397,8 +489,9 @@ type HybridEngine struct {
 func NewHybridEngine(engines ...Engine) *HybridEngine {
 	if len(engines) == 0 {
 		engines = []Engine{
-			NewBingEngine(),
 			NewYahooEngine(),
+			NewBingEngine(),
+			NewDuckDuckGoEngine(),
 		}
 	}
 	return &HybridEngine{engines: engines}
@@ -416,6 +509,7 @@ func (h *HybridEngine) Search(dork string, page int, proxyURL *url.URL, timeout 
 	var allResults []Result
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	var errs []error
 	seen := make(map[string]bool)
 
 	for _, eng := range h.engines {
@@ -423,20 +517,27 @@ func (h *HybridEngine) Search(dork string, page int, proxyURL *url.URL, timeout 
 		go func(e Engine) {
 			defer wg.Done()
 			res, err := e.Search(dork, page, proxyURL, timeout)
+			mu.Lock()
+			defer mu.Unlock()
 			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", e.Name(), err))
 				return
 			}
-			mu.Lock()
 			for _, r := range res {
 				if !seen[r.RawURL] {
 					seen[r.RawURL] = true
 					allResults = append(allResults, r)
 				}
 			}
-			mu.Unlock()
 		}(eng)
 	}
 
 	wg.Wait()
+
+	if len(allResults) == 0 && len(errs) == len(h.engines) && len(h.engines) > 0 {
+		return nil, fmt.Errorf("all engines failed: %v", errs[0])
+	}
+
 	return allResults, nil
 }
+
