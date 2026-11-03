@@ -5,11 +5,20 @@ import (
 	"testing"
 )
 
-func TestVersionInfo(t *testing.T) {
-	// Test when version matches or has string format
-	info := VersionInfo("v3.1.1")
-	if !strings.Contains(info, "v3.1.1") {
-		t.Errorf("Expected version info to contain current version, got: %s", info)
+func TestFormatVersionInfo(t *testing.T) {
+	latest := FormatVersionInfo("v3.1.3", "v3.1.3")
+	if !strings.Contains(latest, "latest") {
+		t.Errorf("Expected latest, got: %s", latest)
+	}
+
+	outdated := FormatVersionInfo("v3.1.2", "v3.1.3")
+	if !strings.Contains(outdated, "outdated") {
+		t.Errorf("Expected outdated, got: %s", outdated)
+	}
+
+	empty := FormatVersionInfo("v3.1.3", "")
+	if empty != "v3.1.3" {
+		t.Errorf("Expected v3.1.3, got: %s", empty)
 	}
 }
 

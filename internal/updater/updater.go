@@ -80,9 +80,8 @@ func GetLatestVersion() string {
 	return ""
 }
 
-// VersionInfo returns formatted version string with (latest) or (outdated)
-func VersionInfo(currentVersion string) string {
-	latest := GetLatestVersion()
+// FormatVersionInfo formats version text based on current and latest versions.
+func FormatVersionInfo(currentVersion, latest string) string {
 	if latest == "" {
 		return currentVersion
 	}
@@ -92,6 +91,11 @@ func VersionInfo(currentVersion string) string {
 	}
 
 	return fmt.Sprintf("%s (%s -> %s available, run: dorkx -update)", currentVersion, "\033[33moutdated\033[0m", latest)
+}
+
+// VersionInfo returns formatted version string with (latest) or (outdated).
+func VersionInfo(currentVersion string) string {
+	return FormatVersionInfo(currentVersion, GetLatestVersion())
 }
 
 // Update pulls the latest version from GitHub, builds, and replaces active binaries
