@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/khaleddevsec/DorkX/internal/output"
+	"github.com/khaleddevsec/DorkX/v3/internal/output"
 )
 
 // RepoURL is the module repository path used for go install updates.
-const RepoURL = "github.com/khaleddevsec/DorkX@latest"
+const RepoURL = "github.com/khaleddevsec/DorkX/v3@latest"
 
 var versionRe = regexp.MustCompile(`AppVersion\s*=\s*"([^"]+)"`)
 

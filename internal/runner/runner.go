@@ -20,10 +20,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/khaleddevsec/DorkX/internal/engine"
-	"github.com/khaleddevsec/DorkX/internal/filter"
-	"github.com/khaleddevsec/DorkX/internal/output"
-	"github.com/khaleddevsec/DorkX/internal/proxy"
+	"github.com/khaleddevsec/DorkX/v3/internal/engine"
+	"github.com/khaleddevsec/DorkX/v3/internal/filter"
+	"github.com/khaleddevsec/DorkX/v3/internal/output"
+	"github.com/khaleddevsec/DorkX/v3/internal/proxy"
 )
 
 // Config holds all runtime configuration from CLI flags

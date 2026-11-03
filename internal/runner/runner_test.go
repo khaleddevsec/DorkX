@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/khaleddevsec/DorkX/internal/engine"
+	"github.com/khaleddevsec/DorkX/v3/internal/engine"
 )
 
 // mockEngine implements engine.Engine for fast deterministic testing

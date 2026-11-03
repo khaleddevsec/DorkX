@@ -16,7 +16,7 @@
 
 <p align="center">
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Language-Go%201.21+-00ADD8?style=flat&logo=go" alt="Go"></a>
-  <a href="https://github.com/khaleddevsec/DorkX/releases"><img src="https://img.shields.io/badge/Version-v3.1.1-brightgreen?style=flat" alt="Version"></a>
+  <a href="https://github.com/khaleddevsec/DorkX/releases"><img src="https://img.shields.io/badge/Version-v3.1.2-brightgreen?style=flat" alt="Version"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
   <a href="https://github.com/khaleddevsec/DorkX"><img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat" alt="Platform"></a>
   <a href="https://github.com/khaleddevsec/DorkX/actions"><img src="https://github.com/khaleddevsec/DorkX/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -46,7 +46,7 @@
 ### Method 1: Direct Install with Go (Recommended)
 
 ```bash
-go install github.com/khaleddevsec/DorkX@latest
+go install github.com/khaleddevsec/DorkX/v3@latest
 ```
 
 Ensure `$GOPATH/bin` or `$HOME/go/bin` is in your system's `PATH`.

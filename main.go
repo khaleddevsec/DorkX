@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/khaleddevsec/DorkX/internal/engine"
-	"github.com/khaleddevsec/DorkX/internal/output"
-	"github.com/khaleddevsec/DorkX/internal/runner"
-	"github.com/khaleddevsec/DorkX/internal/updater"
+	"github.com/khaleddevsec/DorkX/v3/internal/engine"
+	"github.com/khaleddevsec/DorkX/v3/internal/output"
+	"github.com/khaleddevsec/DorkX/v3/internal/runner"
+	"github.com/khaleddevsec/DorkX/v3/internal/updater"
 )
 
 var (
@@ -50,7 +50,7 @@ const (
 	ansiReset  = "\033[0m"
 )
 
-const AppVersion = "v3.1.1"
+const AppVersion = "v3.1.2"
 
 func printBanner() {
 	art := ansiWhite + ansiBold + `
