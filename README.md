@@ -17,6 +17,7 @@
 
 <p align="center">
   <a href="https://github.com/khaleddevsec"><img src="https://img.shields.io/badge/Developer-khaleddevsec-blueviolet?style=flat&logo=github" alt="Developer"></a>
+  <a href="https://pkg.go.dev/github.com/khaleddevsec/DorkX/v3"><img src="https://pkg.go.dev/badge/github.com/khaleddevsec/DorkX/v3.svg" alt="Go Reference"></a>
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Language-Go%201.21+-00ADD8?style=flat&logo=go" alt="Go"></a>
   <a href="https://github.com/khaleddevsec/DorkX/releases"><img src="https://img.shields.io/badge/Version-v3.1.3-brightgreen?style=flat" alt="Version"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
