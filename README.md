@@ -11,15 +11,17 @@
 </h1>
 
 <p align="center">
-  <b>Fast, zero-captcha, multi-engine dorking tool built for security researchers, penetration testers, and bug bounty hunters.</b>
+  <b>Fast, zero-captcha, multi-engine dorking tool built for security researchers, penetration testers, and bug bounty hunters.</b><br>
+  Developed by <b><a href="https://github.com/khaleddevsec">khaleddevsec</a></b>
 </p>
 
 <p align="center">
+  <a href="https://github.com/khaleddevsec"><img src="https://img.shields.io/badge/Developer-khaleddevsec-blueviolet?style=flat&logo=github" alt="Developer"></a>
   <a href="https://golang.org"><img src="https://img.shields.io/badge/Language-Go%201.21+-00ADD8?style=flat&logo=go" alt="Go"></a>
   <a href="https://github.com/khaleddevsec/DorkX/releases"><img src="https://img.shields.io/badge/Version-v3.1.3-brightgreen?style=flat" alt="Version"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License"></a>
   <a href="https://github.com/khaleddevsec/DorkX"><img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey?style=flat" alt="Platform"></a>
-  <a href="https://github.com/khaleddevsec/DorkX/actions"><img src="https://github.com/khaleddevsec/DorkX/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/khaleddevsec/DorkX/actions/workflows/ci.yml"><img src="https://github.com/khaleddevsec/DorkX/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI Status"></a>
 </p>
 
 ---
