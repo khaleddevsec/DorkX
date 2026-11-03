@@ -12,4 +12,3 @@ func hasStdinData() bool {
 	}
 	return true
 }
-

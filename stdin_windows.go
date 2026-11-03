@@ -28,4 +28,3 @@ func hasStdinData() bool {
 	)
 	return r1 != 0 && totalBytes > 0
 }
-
