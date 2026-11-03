@@ -23,7 +23,7 @@ const (
 	ansiReset  = "\033[0m"
 )
 
-const AppVersion = "v3.1.2"
+const AppVersion = "v3.1.3"
 
 func printBanner() {
 	art := ansiWhite + ansiBold + `
