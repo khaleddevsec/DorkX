@@ -63,3 +63,4 @@ func TestBuildClient(t *testing.T) {
 		t.Error("Expected client caching to return the same client instance for identical parameters")
 	}
 }
+

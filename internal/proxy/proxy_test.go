@@ -75,3 +75,4 @@ func TestNewPoolFromFile(t *testing.T) {
 		t.Errorf("Expected 2 proxies from file, got %d", pool.Len())
 	}
 }
+

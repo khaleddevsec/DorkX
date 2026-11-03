@@ -42,3 +42,4 @@ func TestLoggingMethodsNoPanic(t *testing.T) {
 	Dorkf("test dorkf %s", "arg")
 	Grayf("test grayf %s", "arg")
 }
+
