@@ -1,9 +1,14 @@
+// Package runner coordinates the execution of search engine dorks across
+// configured search engines, concurrency worker pools, target filters,
+// proxy rotation, and live HTTP probing.
 package runner
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -24,7 +29,7 @@ import (
 // Config holds all runtime configuration from CLI flags
 type Config struct {
 	Dorks        []string
-	Limit        int    // Target number of unique results per dork (e.g: 50)
+	Limit        int    // Target number of unique results per dork (default: 50)
 	DelayRange   string // "min-max" seconds e.g. "1-2"
 	Proxy        string
 	ProxyList    string
@@ -63,6 +68,12 @@ func New(cfg *Config) *Runner {
 	if cfg.Limit <= 0 {
 		cfg.Limit = 50
 	}
+	if cfg.Threads < 1 {
+		cfg.Threads = 1
+	}
+	if cfg.Timeout <= 0 {
+		cfg.Timeout = 25
+	}
 
 	r := &Runner{
 		cfg:         cfg,
@@ -82,14 +93,17 @@ func New(cfg *Config) *Runner {
 
 	r.delayMin, r.delayMax = parseDelay(cfg.DelayRange)
 
+	probeTransport := &http.Transport{
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: cfg.InsecureTLS},
+		DisableKeepAlives:   false,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     30 * time.Second,
+	}
+
 	r.probeClient = &http.Client{
-		Timeout: 6 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig:   &tls.Config{InsecureSkipVerify: cfg.InsecureTLS},
-			DisableKeepAlives: false,
-			MaxIdleConns:      100,
-			IdleConnTimeout:   30 * time.Second,
-		},
+		Timeout:   6 * time.Second,
+		Transport: probeTransport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return http.ErrUseLastResponse
@@ -101,47 +115,41 @@ func New(cfg *Config) *Runner {
 	return r
 }
 
-// probeURL makes a quick GET request to check HTTP status code
-func (r *Runner) probeURL(target string, proxyURL *url.URL) int {
-	req, err := http.NewRequest("GET", target, nil)
+// probeURL makes a quick GET request to check HTTP status code using context
+func (r *Runner) probeURL(ctx context.Context, target string) int {
+	req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
 	if err != nil {
 		return 0
 	}
 
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 	req.Header.Set("Accept", "*/*")
 
-	client := r.probeClient
-	if proxyURL != nil {
-		tr := &http.Transport{
-			Proxy:             http.ProxyURL(proxyURL),
-			TLSClientConfig:   &tls.Config{InsecureSkipVerify: r.cfg.InsecureTLS},
-			DisableKeepAlives: false,
-			MaxIdleConns:      100,
-			IdleConnTimeout:   30 * time.Second,
-		}
-		client = &http.Client{
-			Transport: tr,
-			Timeout:   7 * time.Second,
-		}
-	}
-
-	resp, err := client.Do(req)
+	resp, err := r.probeClient.Do(req)
 	if err != nil {
 		return 0
 	}
 	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 
 	return resp.StatusCode
 }
 
-// Run executes all dorks, respects concurrency, writes results
+// Run executes all dorks with an interrupt-aware context
 func (r *Runner) Run() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	_ = r.RunContext(ctx)
+}
+
+// RunContext executes all dorks respecting the given context
+func (r *Runner) RunContext(ctx context.Context) error {
 	if r.cfg.OutputFile != "" {
 		f, err := os.Create(r.cfg.OutputFile)
 		if err != nil {
 			output.Errorf("Cannot create output file: %v\n", err)
-			os.Exit(1)
+			return err
 		}
 		r.outFile = f
 		r.outWriter = bufio.NewWriter(f)
@@ -150,33 +158,16 @@ func (r *Runner) Run() {
 			if r.outWriter != nil {
 				_ = r.outWriter.Flush()
 			}
-			f.Close()
+			if r.outFile != nil {
+				_ = r.outFile.Close()
+				r.outFile = nil
+			}
 			r.mu.Unlock()
 		}()
 		if !r.cfg.Silent {
 			output.Infof("Saving results to: %s\n", r.cfg.OutputFile)
 		}
 	}
-
-	// Graceful shutdown on Interrupt (SIGINT / Ctrl+C)
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		r.mu.Lock()
-		if r.outWriter != nil {
-			_ = r.outWriter.Flush()
-		}
-		if r.outFile != nil {
-			_ = r.outFile.Close()
-		}
-		total := r.totalFound
-		r.mu.Unlock()
-		if !r.cfg.Silent {
-			output.Warnf("\n[!] Interrupted by user. Collected %d unique URLs before exit.\n", total)
-		}
-		os.Exit(0)
-	}()
 
 	if r.cfg.ProxyList != "" {
 		pool, err := proxy.NewPoolFromFile(r.cfg.ProxyList)
@@ -205,6 +196,15 @@ func (r *Runner) Run() {
 		}
 	}
 
+	// Route probe client through proxy pool if configured
+	if r.proxyPool != nil {
+		if tr, ok := r.probeClient.Transport.(*http.Transport); ok {
+			tr.Proxy = func(req *http.Request) (*url.URL, error) {
+				return r.nextProxy(), nil
+			}
+		}
+	}
+
 	if !r.cfg.Silent {
 		output.Infof("Engine: %s | Target Limit: %d | Threads: %d | Delay: %s\n",
 			r.cfg.Engine.Name(), r.cfg.Limit, r.cfg.Threads, r.cfg.DelayRange)
@@ -221,18 +221,40 @@ func (r *Runner) Run() {
 	var wg sync.WaitGroup
 
 	for i, dork := range r.cfg.Dorks {
-		sem <- struct{}{}
-		wg.Add(1)
+		if ctx.Err() != nil {
+			break
+		}
 
+		select {
+		case sem <- struct{}{}:
+		case <-ctx.Done():
+			break
+		}
+
+		if ctx.Err() != nil {
+			break
+		}
+
+		wg.Add(1)
 		go func(idx int, d string) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			r.searchDork(idx+1, len(r.cfg.Dorks), d)
+			r.searchDork(ctx, idx+1, len(r.cfg.Dorks), d)
 		}(i, dork)
 	}
 
 	wg.Wait()
+
+	if ctx.Err() != nil {
+		if !r.cfg.Silent {
+			r.mu.Lock()
+			total := r.totalFound
+			r.mu.Unlock()
+			output.Warnf("\n[!] Interrupted by user. Collected %d unique URLs before exit.\n", total)
+		}
+		return ctx.Err()
+	}
 
 	if !r.cfg.Silent {
 		fmt.Fprintln(os.Stderr, "")
@@ -241,10 +263,11 @@ func (r *Runner) Run() {
 			output.Successf("Results saved to: %s\n", r.cfg.OutputFile)
 		}
 	}
+	return nil
 }
 
 // searchDork continuously queries until Target Limit is reached or index is exhausted
-func (r *Runner) searchDork(idx, total int, dork string) {
+func (r *Runner) searchDork(ctx context.Context, idx, total int, dork string) {
 	rule := filter.ExtractRulesFromDork(dork)
 	clusterDorks := filter.GenerateClusterDorks(dork)
 
@@ -271,7 +294,7 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 	foundForDork := 0
 
 	for _, activeDork := range clusterDorks {
-		if foundForDork >= r.cfg.Limit {
+		if foundForDork >= r.cfg.Limit || ctx.Err() != nil {
 			break
 		}
 
@@ -280,9 +303,12 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 		maxConsecutiveEmpty := 5
 		maxPagesSafetyLimit := 40
 
-		for foundForDork < r.cfg.Limit && page < maxPagesSafetyLimit && consecutiveEmpty < maxConsecutiveEmpty {
+		for foundForDork < r.cfg.Limit && page < maxPagesSafetyLimit && consecutiveEmpty < maxConsecutiveEmpty && ctx.Err() == nil {
 			if page > 0 {
-				r.sleep()
+				r.sleep(ctx)
+				if ctx.Err() != nil {
+					break
+				}
 			}
 
 			proxyURL := r.nextProxy()
@@ -305,7 +331,7 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 
 			pageNew := 0
 			for _, res := range results {
-				if foundForDork >= r.cfg.Limit {
+				if foundForDork >= r.cfg.Limit || ctx.Err() != nil {
 					break
 				}
 
@@ -328,15 +354,12 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 					continue
 				}
 				r.seenURLs[cleaned] = true
-				if r.cfg.UniqueDomain {
-					r.seenDomains[domainKey] = true
-				}
 				r.mu.Unlock()
 
 				// Live Status Code Probe (if -status-code or -mc is set)
 				statusCode := 0
 				if r.cfg.StatusCode || len(r.matchCodes) > 0 {
-					statusCode = r.probeURL(cleaned, proxyURL)
+					statusCode = r.probeURL(ctx, cleaned)
 
 					// Filter by match code if specified (e.g. -mc 200)
 					if len(r.matchCodes) > 0 && !r.matchCodes[statusCode] {
@@ -345,6 +368,14 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 				}
 
 				r.mu.Lock()
+				// Double-check unique domain before committing
+				if r.cfg.UniqueDomain && r.seenDomains[domainKey] {
+					r.mu.Unlock()
+					continue
+				}
+				if r.cfg.UniqueDomain {
+					r.seenDomains[domainKey] = true
+				}
 				r.totalFound++
 				foundForDork++
 
@@ -379,7 +410,7 @@ func (r *Runner) searchDork(idx, total int, dork string) {
 		}
 	}
 
-	if !r.cfg.Silent {
+	if !r.cfg.Silent && ctx.Err() == nil {
 		output.Successf("Dork complete: %d matched URLs found.\n\n", foundForDork)
 	}
 }
@@ -391,13 +422,16 @@ func (r *Runner) nextProxy() *url.URL {
 	return r.proxyPool.Next()
 }
 
-func (r *Runner) sleep() {
+func (r *Runner) sleep(ctx context.Context) {
 	if r.delayMin <= 0 {
 		return
 	}
 	spread := r.delayMax - r.delayMin
 	secs := r.delayMin + rand.Float64()*spread
-	time.Sleep(time.Duration(secs*1000) * time.Millisecond)
+	select {
+	case <-time.After(time.Duration(secs*1000) * time.Millisecond):
+	case <-ctx.Done():
+	}
 }
 
 func parseDelay(s string) (float64, float64) {

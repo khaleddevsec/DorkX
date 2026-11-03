@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Build & Test (${{ matrix.os }})
+    name: Build & Test (${{ matrix.os }}, Go ${{ matrix.go-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -25,8 +25,24 @@ jobs:
           go-version: ${{ matrix.go-version }}
           cache: true
 
+      - name: Verify Formatting (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Unformatted files found:"
+            gofmt -l .
+            exit 1
+          fi
+
+      - name: Run Go Vet
+        run: go vet ./...
+
       - name: Run Tests
         run: go test -v ./...
+
+      - name: Run Race Detector (Linux)
+        if: runner.os == 'Linux'
+        run: go test -race -v ./...
 
       - name: Build Binary
         run: go build -v .

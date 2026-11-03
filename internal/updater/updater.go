@@ -1,3 +1,5 @@
+// Package updater provides self-updating functionality for DorkX,
+// allowing users to check GitHub releases and rebuild or update binaries.
 package updater
 
 import (
@@ -9,15 +11,51 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/khaleddevsec/DorkX/internal/output"
 )
 
+// RepoURL is the module repository path used for go install updates.
 const RepoURL = "github.com/khaleddevsec/DorkX@latest"
 
-// GetLatestVersion checks GitHub for the newest AppVersion
+var versionRe = regexp.MustCompile(`AppVersion\s*=\s*"([^"]+)"`)
+
+// compareSemver compares two semantic versions (e.g. "v3.1.1" vs "v3.1.0").
+// Returns 1 if v1 > v2, -1 if v1 < v2, and 0 if v1 == v2.
+func compareSemver(v1, v2 string) int {
+	clean1 := strings.TrimPrefix(v1, "v")
+	clean2 := strings.TrimPrefix(v2, "v")
+
+	parts1 := strings.Split(clean1, ".")
+	parts2 := strings.Split(clean2, ".")
+
+	maxLen := len(parts1)
+	if len(parts2) > maxLen {
+		maxLen = len(parts2)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		var n1, n2 int
+		if i < len(parts1) {
+			n1, _ = strconv.Atoi(parts1[i])
+		}
+		if i < len(parts2) {
+			n2, _ = strconv.Atoi(parts2[i])
+		}
+		if n1 > n2 {
+			return 1
+		}
+		if n1 < n2 {
+			return -1
+		}
+	}
+	return 0
+}
+
+// GetLatestVersion checks GitHub for the newest AppVersion.
 func GetLatestVersion() string {
 	client := &http.Client{Timeout: 4 * time.Second}
 	resp, err := client.Get("https://raw.githubusercontent.com/khaleddevsec/DorkX/main/main.go")
@@ -26,13 +64,16 @@ func GetLatestVersion() string {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
 		return ""
 	}
 
-	re := regexp.MustCompile(`AppVersion\s*=\s*"([^"]+)"`)
-	matches := re.FindStringSubmatch(string(body))
+	matches := versionRe.FindStringSubmatch(string(body))
 	if len(matches) > 1 {
 		return matches[1]
 	}
@@ -46,7 +87,7 @@ func VersionInfo(currentVersion string) string {
 		return currentVersion
 	}
 
-	if strings.TrimPrefix(currentVersion, "v") == strings.TrimPrefix(latest, "v") {
+	if compareSemver(currentVersion, latest) >= 0 {
 		return fmt.Sprintf("%s (%s)", currentVersion, "\033[32mlatest\033[0m")
 	}
 
@@ -58,7 +99,7 @@ func Update(currentVersion string) {
 	output.Infof("Checking for DorkX updates from GitHub...\n")
 
 	latest := GetLatestVersion()
-	if latest != "" && strings.TrimPrefix(currentVersion, "v") == strings.TrimPrefix(latest, "v") {
+	if latest != "" && compareSemver(currentVersion, latest) >= 0 {
 		output.Successf("DorkX is already at the latest version (%s)!\n", currentVersion)
 		return
 	}

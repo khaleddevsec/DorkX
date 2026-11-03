@@ -1,3 +1,5 @@
+// Package proxy provides HTTP and SOCKS5 proxy pooling, validation,
+// and thread-safe round-robin rotation.
 package proxy
 
 import (
@@ -10,13 +12,14 @@ import (
 	"sync/atomic"
 )
 
-// Pool manages a list of proxies with round-robin rotation
+// Pool manages a list of proxies with thread-safe round-robin rotation.
 type Pool struct {
 	proxies []*url.URL
 	index   atomic.Uint64
 }
 
-// NewPool creates a proxy pool from a list of proxy URL strings
+// NewPool creates a proxy pool from a list of proxy URL strings.
+// Supports http, https, and socks5 proxy URLs. Lines starting with # are ignored.
 func NewPool(proxyURLs []string) (*Pool, error) {
 	pool := &Pool{}
 	for _, raw := range proxyURLs {
@@ -24,8 +27,11 @@ func NewPool(proxyURLs []string) (*Pool, error) {
 		if raw == "" || strings.HasPrefix(raw, "#") {
 			continue
 		}
+		if !strings.Contains(raw, "://") {
+			raw = "http://" + raw
+		}
 		parsed, err := url.Parse(raw)
-		if err != nil {
+		if err != nil || parsed.Host == "" {
 			continue
 		}
 		pool.proxies = append(pool.proxies, parsed)

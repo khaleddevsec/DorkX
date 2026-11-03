@@ -5,13 +5,40 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
+	"syscall"
+	"unsafe"
 
 	"github.com/khaleddevsec/DorkX/internal/engine"
 	"github.com/khaleddevsec/DorkX/internal/output"
 	"github.com/khaleddevsec/DorkX/internal/runner"
 	"github.com/khaleddevsec/DorkX/internal/updater"
 )
+
+var (
+	kernel32          = syscall.NewLazyDLL("kernel32.dll")
+	procPeekNamedPipe = kernel32.NewProc("PeekNamedPipe")
+)
+
+// hasStdinData checks if standard input is a pipe that currently has data available.
+func hasStdinData() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil || (stat.Mode()&os.ModeNamedPipe == 0) {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		var totalBytes uint32
+		r1, _, _ := procPeekNamedPipe.Call(
+			os.Stdin.Fd(),
+			0, 0, 0,
+			uintptr(unsafe.Pointer(&totalBytes)),
+			0,
+		)
+		return r1 != 0 && totalBytes > 0
+	}
+	return true
+}
 
 // ANSI color codes
 const (
@@ -23,7 +50,7 @@ const (
 	ansiReset  = "\033[0m"
 )
 
-const AppVersion = "v3.1.0"
+const AppVersion = "v3.1.1"
 
 func printBanner() {
 	art := ansiWhite + ansiBold + `
@@ -50,29 +77,29 @@ func printBanner() {
 
 func main() {
 	// --- CLI Flags ---
-	dork         := flag.String("d", "", "Single dork query string (e.g: -d \"inurl:php?id= -github\")")
-	list         := flag.String("l", "", "Path to file containing dorks (one per line)")
-	outputFile   := flag.String("o", "", "Save results to file (e.g: -o results.txt)")
-	limit        := flag.Int("limit", 50, "Target number of unique matched URLs to collect (default: 50)")
-	engineName   := flag.String("e", "hybrid", "Search engine: hybrid (default: Yahoo + Bing + DuckDuckGo), yahoo, bing, ddg, google, google-api, or all")
-	delay        := flag.String("delay", "1-2", "Delay range between requests in seconds (default: 1-2)")
-	proxy        := flag.String("proxy", "", "HTTP/SOCKS5 proxy URL (e.g: socks5://127.0.0.1:9050 or http://proxy:8080)")
-	proxyList    := flag.String("proxy-list", "", "Path to file with proxy list (round-robin rotation)")
-	silent       := flag.Bool("silent", false, "Silent mode: only print matched URLs (no banner/logs)")
+	dork := flag.String("d", "", "Single dork query string (e.g: -d \"inurl:php?id= -github\")")
+	list := flag.String("l", "", "Path to file containing dorks (one per line)")
+	outputFile := flag.String("o", "", "Save results to file (e.g: -o results.txt)")
+	limit := flag.Int("limit", 50, "Target number of unique matched URLs to collect (default: 50)")
+	engineName := flag.String("e", "hybrid", "Search engine: hybrid (default: Yahoo + Bing + DuckDuckGo), yahoo, bing, ddg, google, google-api, or all")
+	delay := flag.String("delay", "1-2", "Delay range between requests in seconds (default: 1-2)")
+	proxy := flag.String("proxy", "", "HTTP/SOCKS5 proxy URL (e.g: socks5://127.0.0.1:9050 or http://proxy:8080)")
+	proxyList := flag.String("proxy-list", "", "Path to file with proxy list (round-robin rotation)")
+	silent := flag.Bool("silent", false, "Silent mode: only print matched URLs (no banner/logs)")
 	uniqueDomain := flag.Bool("u", false, "Only output 1 URL per unique root domain")
-	statusCode   := flag.Bool("status-code", false, "Probe and display HTTP status code (e.g: [200])")
-	scShort      := flag.Bool("sc", false, "Alias for -status-code")
-	matchCode    := flag.String("mc", "", "Match HTTP status code filter (e.g: -mc 200 or -mc 200,301)")
-	insecure     := flag.Bool("insecure", false, "Disable TLS certificate verification for target status probing")
-	kShort       := flag.Bool("k", false, "Alias for -insecure")
-	threads      := flag.Int("t", 1, "Number of concurrent dork searches (default: 1)")
-	timeout      := flag.Int("timeout", 25, "HTTP request timeout in seconds (default: 25)")
-	apiKey       := flag.String("api-key", os.Getenv("GOOGLE_API_KEY"), "Google Custom Search JSON API Key (for google-api engine)")
-	cx           := flag.String("cx", os.Getenv("GOOGLE_CX"), "Google Custom Search Engine ID / CX (for google-api engine)")
-	noColor      := flag.Bool("nc", false, "Disable colored output")
-	doUpdate     := flag.Bool("update", false, "Update DorkX to the latest version directly from GitHub")
-	upShort      := flag.Bool("up", false, "Alias for -update")
-	version      := flag.Bool("version", false, "Print version and exit")
+	statusCode := flag.Bool("status-code", false, "Probe and display HTTP status code (e.g: [200])")
+	scShort := flag.Bool("sc", false, "Alias for -status-code")
+	matchCode := flag.String("mc", "", "Match HTTP status code filter (e.g: -mc 200 or -mc 200,301)")
+	insecure := flag.Bool("insecure", false, "Disable TLS certificate verification for target status probing")
+	kShort := flag.Bool("k", false, "Alias for -insecure")
+	threads := flag.Int("t", 1, "Number of concurrent dork searches (default: 1)")
+	timeout := flag.Int("timeout", 25, "HTTP request timeout in seconds (default: 25)")
+	apiKey := flag.String("api-key", os.Getenv("GOOGLE_API_KEY"), "Google Custom Search JSON API Key (for google-api engine)")
+	cx := flag.String("cx", os.Getenv("GOOGLE_CX"), "Google Custom Search Engine ID / CX (for google-api engine)")
+	noColor := flag.Bool("nc", false, "Disable colored output")
+	doUpdate := flag.Bool("update", false, "Update DorkX to the latest version directly from GitHub")
+	upShort := flag.Bool("up", false, "Alias for -update")
+	version := flag.Bool("version", false, "Print version and exit")
 
 	flag.Usage = printUsage
 	flag.Parse()
@@ -108,9 +135,8 @@ func main() {
 		dorks = append(dorks, fileDorks...)
 	}
 
-	// 3. From STDIN (pipe: cat dorks.txt | dorkx -silent)
-	stat, err := os.Stdin.Stat()
-	if err == nil && (stat.Mode()&os.ModeNamedPipe != 0) {
+	// 3. From STDIN (pipe: cat dorks.txt | dorkx -silent) only if no dorks provided via flags
+	if len(dorks) == 0 && hasStdinData() {
 		stdinDorks, err := readLines("-")
 		if err == nil {
 			dorks = append(dorks, stdinDorks...)
@@ -164,8 +190,15 @@ func main() {
 			)
 		}
 	case "hybrid":
-		fallthrough
+		searchEngine = engine.NewHybridEngine(
+			engine.NewYahooEngine(),
+			engine.NewBingEngine(),
+			engine.NewDuckDuckGoEngine(),
+		)
 	default:
+		if *engineName != "" && *engineName != "hybrid" {
+			output.Warnf("Unknown search engine '%s', defaulting to hybrid engine.\n", *engineName)
+		}
 		searchEngine = engine.NewHybridEngine(
 			engine.NewYahooEngine(),
 			engine.NewBingEngine(),
@@ -292,4 +325,3 @@ EXAMPLES:
   dorkx -update
 `)
 }
-

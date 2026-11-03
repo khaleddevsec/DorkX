@@ -1,3 +1,6 @@
+// Package engine provides search engine scrapers and APIs for querying dorks,
+// including Bing, Yahoo, DuckDuckGo, Google HTML, Google Custom Search API,
+// and a concurrent Hybrid multi-engine aggregator.
 package engine
 
 import (
@@ -29,37 +32,53 @@ type Engine interface {
 
 // ---- User-Agent Pool --------------------------------------------------------
 var userAgents = []string{
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (X11; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-	"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0",
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:126.0) Gecko/20100101 Firefox/126.0",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
 }
 
 func randomUA() string {
 	return userAgents[rand.Intn(len(userAgents))]
 }
 
-// ---- HTTP Client Builder ----------------------------------------------------
+// ---- HTTP Client Pool / Cache -----------------------------------------------
+
+var (
+	clientCacheMu sync.Mutex
+	clientCache   = make(map[string]*http.Client)
+)
 
 func buildClient(proxyURL *url.URL, timeout int) *http.Client {
+	effectiveTimeout := timeout
+	if effectiveTimeout <= 0 {
+		effectiveTimeout = 25
+	}
+
+	key := fmt.Sprintf("%v:%d", proxyURL, effectiveTimeout)
+
+	clientCacheMu.Lock()
+	defer clientCacheMu.Unlock()
+
+	if client, ok := clientCache[key]; ok {
+		return client
+	}
+
 	transport := &http.Transport{
-		ForceAttemptHTTP2: true,
-		DisableKeepAlives: false,
-		MaxIdleConns:      30,
-		TLSClientConfig:   &tls.Config{InsecureSkipVerify: false},
+		ForceAttemptHTTP2:   true,
+		DisableKeepAlives:   false,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		IdleConnTimeout:     90 * time.Second,
+		TLSClientConfig:     &tls.Config{InsecureSkipVerify: false},
 	}
 
 	if proxyURL != nil {
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 
-	effectiveTimeout := timeout
-	if effectiveTimeout <= 0 {
-		effectiveTimeout = 25
-	}
-
-	return &http.Client{
+	client := &http.Client{
 		Transport: transport,
 		Timeout:   time.Duration(effectiveTimeout) * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -69,6 +88,9 @@ func buildClient(proxyURL *url.URL, timeout int) *http.Client {
 			return nil
 		},
 	}
+
+	clientCache[key] = client
+	return client
 }
 
 // ---- Bing Engine -------------------------------------------------------------
@@ -81,10 +103,11 @@ func NewBingEngine() *BingEngine {
 
 func (b *BingEngine) Name() string { return "Bing" }
 
-var bingCkMatch = regexp.MustCompile(`href=["'](https://www\.bing\.com/ck/a\?[^"'\s>]+)["']`)
+var bingCkMatch = regexp.MustCompile(`href=["']((?:https://www\.bing\.com)?/ck/a\?[^"'\s>]+)["']`)
 var bingDirectHref = regexp.MustCompile(`<h2><a\s+[^>]*href=["'](https?://[^"'\s>]+)["']`)
 
-func decodeBingRedirect(raw string) string {
+// DecodeBingRedirect extracts and decodes the target URL from a Bing /ck/a tracking link.
+func DecodeBingRedirect(raw string) string {
 	if strings.Contains(raw, "&u=a1") || strings.Contains(raw, "&amp;u=a1") {
 		var b64 string
 		if strings.Contains(raw, "&u=a1") {
@@ -103,8 +126,16 @@ func decodeBingRedirect(raw string) string {
 		if err == nil && strings.HasPrefix(string(dec), "http") {
 			return string(dec)
 		}
+		// Fallback for RawURLEncoding
+		if decRaw, errRaw := base64.RawURLEncoding.DecodeString(strings.TrimRight(b64, "=")); errRaw == nil && strings.HasPrefix(string(decRaw), "http") {
+			return string(decRaw)
+		}
 	}
 	return raw
+}
+
+func decodeBingRedirect(raw string) string {
+	return DecodeBingRedirect(raw)
 }
 
 func (b *BingEngine) Search(dork string, page int, proxyURL *url.URL, timeout int) ([]Result, error) {
@@ -540,4 +571,3 @@ func (h *HybridEngine) Search(dork string, page int, proxyURL *url.URL, timeout 
 
 	return allResults, nil
 }
-

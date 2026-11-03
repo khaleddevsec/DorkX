@@ -1,3 +1,5 @@
+// Package output handles synchronized thread-safe logging, terminal colorization,
+// and Unix pipeline-compatible standard output formatting for DorkX.
 package output
 
 import (
@@ -129,4 +131,3 @@ func Grayf(format string, args ...any) {
 	defer outputMu.Unlock()
 	fmt.Fprintf(os.Stderr, colorize(colorGray, "")+format+colorReset, args...)
 }
-

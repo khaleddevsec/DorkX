@@ -79,6 +79,8 @@ func TestRootDomain(t *testing.T) {
 		{"https://portal.site.gov.bd/login", "site.gov.bd"},
 		{"https://api.app.co.uk/index.php", "app.co.uk"},
 		{"http://test.org.in/admin", "test.org.in"},
+		{"http://192.168.1.1:8080/index.php", "192.168.1.1"},
+		{"http://[::1]/index.php", "::1"},
 	}
 
 	for _, tc := range tests {
@@ -86,6 +88,64 @@ func TestRootDomain(t *testing.T) {
 		if got != tc.expected {
 			t.Errorf("RootDomain(%s) = %s; want %s", tc.url, got, tc.expected)
 		}
+	}
+}
+
+func TestNegativeExclusions(t *testing.T) {
+	dork := `inurl:php?id= -github -site:excluded.com -inurl:test`
+	rule := ExtractRulesFromDork(dork)
+
+	validURL := "https://target.com/page.php?id=123"
+	if !IsValidURL(validURL, rule) {
+		t.Errorf("Expected %s to be valid", validURL)
+	}
+
+	rejectedURLs := []string{
+		"https://target.com/page.php?id=123&ref=github",
+		"https://excluded.com/page.php?id=123",
+		"https://sub.excluded.com/page.php?id=123",
+		"https://target.com/test/page.php?id=123",
+	}
+
+	for _, u := range rejectedURLs {
+		if IsValidURL(u, rule) {
+			t.Errorf("Expected %s to be rejected by negative exclusions", u)
+		}
+	}
+}
+
+func TestFileTypeFiltering(t *testing.T) {
+	dork := `ext:sql`
+	rule := ExtractRulesFromDork(dork)
+
+	validURL := "https://example.com/backup/database.sql"
+	if !IsValidURL(validURL, rule) {
+		t.Errorf("Expected %s to match ext:sql", validURL)
+	}
+
+	// Should not match an HTML article discussing sql
+	falsePositive := "https://example.com/articles/how-to-sql-guide.html"
+	if IsValidURL(falsePositive, rule) {
+		t.Errorf("Expected %s to NOT match ext:sql", falsePositive)
+	}
+}
+
+func TestGenerateClusterDorks(t *testing.T) {
+	dork := "inurl:admin/login.php -site:github.com"
+	cluster := GenerateClusterDorks(dork)
+	if len(cluster) == 0 {
+		t.Fatal("Expected cluster to produce dork variants")
+	}
+
+	foundCombo := false
+	for _, cd := range cluster {
+		if cd == "inurl:admin inurl:login.php -site:github.com" {
+			foundCombo = true
+			break
+		}
+	}
+	if !foundCombo {
+		t.Errorf("Expected decomposed cluster dork 'inurl:admin inurl:login.php -site:github.com', got: %v", cluster)
 	}
 }
 
@@ -97,4 +157,3 @@ func TestExtractRealURL(t *testing.T) {
 		t.Errorf("ExtractRealURL(%s) = %s; want %s", raw, got, expected)
 	}
 }
-

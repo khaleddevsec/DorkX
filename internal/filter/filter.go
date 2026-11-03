@@ -1,7 +1,11 @@
+// Package filter provides search engine dork parsing, rule extraction,
+// URL validation, root domain deduplication, and redirect unwrapping.
 package filter
 
 import (
+	"net"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
 
@@ -158,14 +162,14 @@ func GenerateClusterDorks(dork string) []string {
 					}
 				}
 
-					if len(validSegs) >= 2 {
-						var inurlCombo []string
-						for _, s := range validSegs {
-							inurlCombo = append(inurlCombo, "inurl:"+s)
-						}
-						cluster = append(cluster, strings.TrimSpace(strings.Join(inurlCombo, " ")+" "+suffix))
-						cluster = append(cluster, strings.TrimSpace("inurl:"+validSegs[0]+" \""+validSegs[len(validSegs)-1]+"\" "+suffix))
+				if len(validSegs) >= 2 {
+					var inurlCombo []string
+					for _, s := range validSegs {
+						inurlCombo = append(inurlCombo, "inurl:"+s)
 					}
+					cluster = append(cluster, strings.TrimSpace(strings.Join(inurlCombo, " ")+" "+suffix))
+					cluster = append(cluster, strings.TrimSpace("inurl:"+validSegs[0]+" \""+validSegs[len(validSegs)-1]+"\" "+suffix))
+				}
 			}
 		}
 	}
@@ -238,10 +242,10 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 
 	// --- 1. DEFAULT EXCLUSIONS ---
 	for _, excluded := range defaultExcludedDomains {
-		if strings.Contains(host, excluded) {
+		if host == excluded || strings.HasSuffix(host, "."+excluded) {
 			explicitlyTargeted := false
 			for _, site := range rule.SiteSuffixes {
-				if strings.Contains(site, excluded) {
+				if site == excluded || strings.HasSuffix(site, "."+excluded) || strings.HasSuffix(excluded, site) {
 					explicitlyTargeted = true
 					break
 				}
@@ -305,7 +309,7 @@ func IsValidURL(rawURL string, rule *DorkRule) bool {
 	if len(rule.FileTypes) > 0 {
 		matchedFileType := false
 		for _, ext := range rule.FileTypes {
-			if strings.HasSuffix(path, ext) || strings.Contains(path, ext+"?") || strings.Contains(path, ext+"/") || strings.Contains(path, ext) {
+			if strings.HasSuffix(path, ext) || strings.Contains(path, ext+"/") || filepath.Ext(path) == ext {
 				matchedFileType = true
 				break
 			}
@@ -409,13 +413,23 @@ func ExtractRealURL(raw string) string {
 	return raw
 }
 
-// RootDomain extracts the registered root domain (or eTLD+1) from a URL for deduplication
+// RootDomain extracts the registered root domain (or eTLD+1) from a URL for deduplication.
+// For IP addresses, the IP itself is returned.
 func RootDomain(rawURL string) string {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
 		return rawURL
 	}
 	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return rawURL
+	}
+
+	// Preserve IP addresses directly
+	if net.ParseIP(host) != nil {
+		return host
+	}
+
 	host = strings.TrimPrefix(host, "www.")
 
 	parts := strings.Split(host, ".")
