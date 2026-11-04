@@ -161,7 +161,8 @@ func Update(currentVersion string) {
 
 				if goPath != "" {
 					outBin := filepath.Join(dir, binName)
-					buildCmd := exec.Command(goPath, "build", "-o", outBin, dir)
+					buildCmd := exec.Command(goPath, "build", "-o", outBin, ".")
+					buildCmd.Dir = dir
 					buildCmd.Stdout = os.Stderr
 					buildCmd.Stderr = os.Stderr
 					if err := buildCmd.Run(); err == nil {
